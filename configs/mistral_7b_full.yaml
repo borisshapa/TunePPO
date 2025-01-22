@@ -183,11 +183,11 @@ kl_coeff: 0.01
 
 # Logging
 metric_logger:
-  _component_: torchtune.training.metric_logging.DiskLogger
+  _component_: torchtune.training.metric_logging.WandBLogger
   log_dir: ${output_dir}/logs
-  # entity: RADFAN
-  # project: Torhtune
-  # group: PPO
-  # name: Mistral-7B-Full
+  entity: RADFAN
+  project: Torchtune
+  group: PPO
+  name: Mistral-7B-Full
 
 log_every_n_steps: 1
