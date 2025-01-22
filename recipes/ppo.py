@@ -22,6 +22,7 @@ from torchtune.data import padded_collate
 from torchtune.datasets import ConcatDataset
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.rlhf import PPOStats, Trajectory
+from torchtune.training.metric_logging import MetricLoggerInterface
 from tqdm import tqdm
 
 log = utils.get_logger("DEBUG")
@@ -145,7 +146,7 @@ class PPOFullFinetuneRecipeSingleDevice(FTRecipeInterface):
         Sets up the recipe state correctly. This includes setting recipe attributes based
         on the ``resume_from_checkpoint`` flag.
         """
-        self._metric_logger = config.instantiate(cfg.metric_logger)
+        self._metric_logger: MetricLoggerInterface = config.instantiate(cfg.metric_logger)
 
         # log config with parameter override
         self._metric_logger.log_config(cfg)
