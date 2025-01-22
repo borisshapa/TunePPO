@@ -21,7 +21,7 @@
 # You can add specific overrides through the command line. For example
 # to override the checkpointer directory while launching training
 # you can run:
-#   tune run recipes/ppo.py --config configs/mistral_7b_full.yaml checkpointer.checkpoint_dir=<YOUR_CHECKPOINT_DIR>
+#   tune run receipts/ppo.py --config configs/mistral_7b_full.yaml checkpointer.checkpoint_dir=<YOUR_CHECKPOINT_DIR>
 #
 
 prefix: ~/tmp # Change it to your preference
