@@ -9,7 +9,7 @@ import os
 import sys
 from functools import partial
 from itertools import chain
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Iterable
 from warnings import warn
 
 import torch
@@ -34,6 +34,18 @@ from tqdm import tqdm
 
 log = utils.get_logger("DEBUG")
 
+@torch.no_grad()
+def grad_norm(parameters: Iterable[torch.Tensor]) -> torch.Tensor:
+    """
+    Computes gradient l2-norm of parameters given.
+    """
+    total_norm = 0.0
+    for param in parameters:
+        if param.grad is not None:
+            param_norm = param.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+    total_norm = total_norm ** 0.5
+    return total_norm
 
 class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
     """
@@ -717,6 +729,9 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
 
                         ppo_stats.append(PPOStats(*map(sum, zip(*batch_ppo_stats))))
 
+                        self.log_grad_norm("policy", self._policy)
+                        self.log_grad_norm("value", self._valmod)
+
                         if self._optimizer is not None:
                             self._optimizer.step()
                             self._optimizer.zero_grad(set_to_none=True)
@@ -826,6 +841,15 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
             clipfrac / self._gradient_accumulation_steps,
             approx_policy_kls / self._gradient_accumulation_steps,
         )
+
+    def log_grad_norm(self, name: str, module: nn.Module) -> None:
+        log_dict = {
+            f"{name}_lora_grad_norm":
+                grad_norm([param for name, param in module.named_parameters() if "lora" in name]),
+            f"{name}_base_grad_norm":
+                grad_norm([param for name, param in module.named_parameters() if "lora" not in name]),
+        }
+        self._metric_logger.log_dict(log_dict, step=self.global_step)
 
     def log_metrics(
         self,
