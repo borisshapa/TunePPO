@@ -729,8 +729,10 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
 
                         ppo_stats.append(PPOStats(*map(sum, zip(*batch_ppo_stats))))
 
-                        self.log_grad_norm("policy", self._policy)
-                        self.log_grad_norm("value", self._valmod)
+                        grad_logs = {
+                            **self._collect_grad_norm("policy", self._policy),
+                            **self._collect_grad_norm("value", self._valmod)
+                        }
 
                         if self._optimizer is not None:
                             self._optimizer.step()
@@ -746,6 +748,7 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
                         PPOStats(*map(torch.stack, zip(*ppo_stats))),
                         kl,
                         kl_rewards,
+                        **grad_logs
                     )
                 self.cleanup_after_step(
                     trajectory, ppo_stats, advantages, returns, kl, kl_rewards
@@ -842,14 +845,13 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
             approx_policy_kls / self._gradient_accumulation_steps,
         )
 
-    def log_grad_norm(self, name: str, module: nn.Module) -> None:
-        log_dict = {
+    def _collect_grad_norm(self, name: str, module: nn.Module) -> dict[str, torch.Tensor]:
+        return {
             f"{name}_lora_grad_norm":
                 grad_norm([param for name, param in module.named_parameters() if "lora" in name]),
             f"{name}_base_grad_norm":
                 grad_norm([param for name, param in module.named_parameters() if "lora" not in name]),
         }
-        self._metric_logger.log_dict(log_dict, step=self.global_step)
 
     def log_metrics(
         self,
@@ -857,6 +859,7 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
         ppo_stats: PPOStats,
         kl: torch.Tensor,
         kl_rewards: torch.Tensor,
+        **kwargs
     ) -> None:
         """
         Log metrics and statistics for the current step to the metric logger.
@@ -874,6 +877,7 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
             "ratios": ppo_stats.ratios.mean(),
             "approx_policy_kl": ppo_stats.approx_policy_kls.mean(),
             "response_lengths": trajectory.seq_lens.float().mean(),
+            **kwargs
         }
         if self._device.type == "cuda" and self._log_peak_memory_stats:
             log_dict.update(training.get_memory_stats(device=self._device))
