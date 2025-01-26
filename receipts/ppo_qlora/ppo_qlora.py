@@ -190,15 +190,9 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
         self._policy_adapter_config = get_adapter_config(cfg.policy)
         self._valmod_adpater_config = get_adapter_config(cfg.valmod)
 
-        # ensure not resumed from checkpoint
-        if cfg.resume_from_checkpoint:
-            raise RuntimeError("resume from checkpoint not supported")
-        self._resume_from_checkpoint = False
-
     def setup(self, cfg: DictConfig) -> None:
         """
-        Sets up the recipe state correctly. This includes setting recipe attributes based
-        on the ``resume_from_checkpoint`` flag.
+        Sets up the recipe state correctly.
         """
         # set metric logger
         self._metric_logger: MetricLoggerInterface = config.instantiate(cfg.metric_logger)
