@@ -518,14 +518,14 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
         separately as well.
         """
         self._checkpointer.save_checkpoint(
-            stat_dict=get_merged_adapter_state_dict(
+            state_dict=get_merged_adapter_state_dict(
                 module=self._policy,
                 module_adapter_config=self._policy_adapter_config
             ),
             epoch=epoch
         )
         self._value_checkpointer.save_checkpoint(
-            stat_dict=get_merged_adapter_state_dict(
+            state_dict=get_merged_adapter_state_dict(
                 module=self._valmod,
                 module_adapter_config=self._valmod_adpater_config
             ),
