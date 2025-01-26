@@ -1,6 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
@@ -23,6 +20,9 @@ from torchtune.datasets import ConcatDataset
 from torchtune.modules.peft import (
     disable_adapter,
     get_adapter_params,
+    get_adapter_state_dict,
+    get_lora_module_names,
+    get_merged_lora_ckpt,
     set_trainable_params,
 )
 from torchtune.modules.tokenizers import ModelTokenizer
@@ -46,6 +46,42 @@ def grad_norm(parameters: Iterable[torch.Tensor]) -> torch.Tensor:
             total_norm += param_norm.item() ** 2
     total_norm = total_norm ** 0.5
     return total_norm
+
+def get_adapter_config(cfg_model: DictConfig) -> Dict[str, Any]:
+    """
+    Retrieves adapter config from model config suitable for checkpointing.
+    """
+    return {
+        "r": cfg_model.lora_rank,
+        "lora_alpha": cfg_model.lora_alpha,
+        "target_modules": get_lora_module_names(
+            list(cfg_model.lora_attn_modules),
+            getattr(cfg_model, "apply_lora_to_mlp", False),
+            getattr(cfg_model, "apply_lora_to_output", False)
+        ),
+        "peft_type": "LORA",
+    }
+
+def get_merged_adapter_state_dict(
+    module: nn.Module,
+    module_adapter_config: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Constructs model merged with adapter state dict. The resulting state
+    dict contains the following information:
+    - Merged weights with key MODEL_KEY
+    - Adapter weights with key ADAPTER_KEY
+    - Adapter config with key ADAPTER_CONFIG
+    """
+    return {
+        training.ADAPTER_KEY: get_adapter_state_dict(module.state_dict()),
+        training.ADAPTER_CONFIG: module_adapter_config,
+        training.MODEL_KEY: get_merged_lora_ckpt(
+            state_dict  = {k: v.cpu() for k, v in module.state_dict().items()},
+            rank        = module_adapter_config["r"],
+            alpha       = module_adapter_config["lora_alpha"],
+        )
+    }
 
 class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
     """
@@ -149,6 +185,10 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
         self._steps_run     = 0
         self._total_epochs  = 0
         self._epochs_run    = 0
+
+        # save adapter configs for checkpointing
+        self._policy_adapter_config = get_adapter_config(cfg.policy)
+        self._valmod_adpater_config = get_adapter_config(cfg.valmod)
 
         # ensure not resumed from checkpoint
         if cfg.resume_from_checkpoint:
@@ -479,19 +519,22 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
 
     def save_checkpoint(self, epoch: int) -> None:
         """
-        Save state dict to file. The recipe save_checkpoint method is responsible for
-        correctly creating the checkpoint dict and passing to the checkpointer.
+        Save state dict to file. Policy and value models are merged with their
+        adapters and saved. Adapters with corresponding configs are saved
+        separately as well.
         """
-        policy_ckpt_dict = {training.MODEL_KEY: self._policy.state_dict()}
-        value_ckpt_dict = {training.MODEL_KEY: self._valmod.state_dict()}
-
         self._checkpointer.save_checkpoint(
-            policy_ckpt_dict,
+            stat_dict=get_merged_adapter_state_dict(
+                module=self._policy,
+                module_adapter_config=self._policy_adapter_config
+            ),
             epoch=epoch
         )
-
         self._value_checkpointer.save_checkpoint(
-            value_ckpt_dict,
+            stat_dict=get_merged_adapter_state_dict(
+                module=self._valmod,
+                module_adapter_config=self._valmod_adpater_config
+            ),
             epoch=epoch
         )
 
