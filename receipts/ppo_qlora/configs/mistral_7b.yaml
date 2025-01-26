@@ -49,6 +49,7 @@ dataset:
 # Policy / Reference Policy when adapter disabled
 policy:
   _component_: torchtune.models.mistral.lora_mistral_7b
+  # (Q)LoRA
   lora_attn_modules: ['q_proj', 'k_proj', 'v_proj', 'output_proj']
   apply_lora_to_mlp: True
   apply_lora_to_output: False
@@ -96,7 +97,6 @@ checkpointer:
   recipe_checkpoint: null
   output_dir: ${output_dir}/policy
   model_type: MISTRAL
-save_adapter_weights_only: False
 
 # checkpointer for the value model initialized with the reward model weights
 value_checkpointer:
@@ -111,7 +111,6 @@ value_checkpointer:
   output_dir: ${output_dir}/value
   model_type: REWARD
 
-resume_from_checkpoint: False
 seed: null
 shuffle: True
 
