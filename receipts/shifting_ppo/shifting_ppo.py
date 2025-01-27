@@ -94,9 +94,9 @@ def merge_lora_adapter(model: nn.Module) -> nn.Module:
     """
     for m in get_lora_modules(model):
         if isinstance(m.weight, NF4Tensor):
-            m.weight = m.weight.get_original_weight()
-            m.weight += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
-            m.weight = to_nf4(m.weight)
+            dequantw = m.weight.get_original_weight()
+            dequantw += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
+            m.weight = nn.Parameter(to_nf4(dequantw))
         else:
             m.weight += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
 
