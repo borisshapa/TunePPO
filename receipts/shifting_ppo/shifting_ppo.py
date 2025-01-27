@@ -14,6 +14,7 @@ from omegaconf import DictConfig, ListConfig
 from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
+from torchao.dtypes import NF4Tensor
 from torchtune import config, generation, modules, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.datasets import ConcatDataset
@@ -25,6 +26,7 @@ from torchtune.modules.peft import (
     set_trainable_params,
 )
 from torchtune.modules.peft import LoRALinear
+from torchtune.modules.peft.lora import to_nf4
 from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.rlhf import PPOStats, Trajectory
@@ -88,10 +90,15 @@ def get_lora_modules(model: nn.Module) -> Iterator[LoRALinear]:
 @torch.no_grad()
 def merge_lora_adapter(model: nn.Module) -> nn.Module:
     """
-    Merges LoRA adapters into base model in-place.
+    Merges (Q)LoRA adapters into base model in-place.
     """
     for m in get_lora_modules(model):
-        m.weight += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
+        if isinstance(m.weight, NF4Tensor):
+            m.weight = m.weight.get_original_weight()
+            m.weight += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
+            m.weight = to_nf4(m.weight)
+        else:
+            m.weight += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
 
     return model
 
