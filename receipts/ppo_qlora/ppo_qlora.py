@@ -6,7 +6,7 @@ import os
 import sys
 from functools import partial
 from itertools import chain
-from typing import Any, Dict, List, Optional, Tuple, Iterable
+from typing import Any, Dict, List, Optional, Tuple, Iterable, Iterator
 from warnings import warn
 
 import torch
@@ -20,11 +20,11 @@ from torchtune.datasets import ConcatDataset
 from torchtune.modules.peft import (
     disable_adapter,
     get_adapter_params,
-    get_adapter_state_dict,
     get_lora_module_names,
     get_merged_lora_ckpt,
     set_trainable_params,
 )
+from torchtune.modules.peft import LoRALinear
 from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.rlhf import PPOStats, Trajectory
@@ -67,21 +67,43 @@ def get_merged_adapter_state_dict(
     module_adapter_config: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Constructs model merged with adapter state dict. The resulting state
-    dict contains the following information:
-    - Merged weights with key MODEL_KEY
-    - Adapter weights with key ADAPTER_KEY
-    - Adapter config with key ADAPTER_CONFIG
+    Constructs model merged with adapter state dict.
     """
     return {
-        training.ADAPTER_KEY: get_adapter_state_dict(module.state_dict()),
-        training.ADAPTER_CONFIG: module_adapter_config,
         training.MODEL_KEY: get_merged_lora_ckpt(
             state_dict  = {k: v.cpu() for k, v in module.state_dict().items()},
             rank        = module_adapter_config["r"],
             alpha       = module_adapter_config["lora_alpha"],
         )
     }
+
+def get_lora_modules(model: nn.Module) -> Iterator[LoRALinear]:
+    """
+    Returns an iterator over all LoRA modules in the network.
+    """
+    for name, module in model.named_modules():
+        if isinstance(module, LoRALinear):
+            yield module
+
+@torch.no_grad()
+def merge_lora_adapter(model: nn.Module) -> nn.Module:
+    """
+    Merges LoRA adapters into base model in-place.
+    """
+    for m in get_lora_modules(model):
+        m.weight += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
+
+    return model
+
+@torch.no_grad()
+def clear_lora_adapter(model: nn.Module) -> nn.Module:
+    """
+    Reinitialize LoRA adapters.
+    """
+    for m in get_lora_modules(model):
+        m.initialize_parameters()
+
+    return model
 
 class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
     """
@@ -699,6 +721,10 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
             # in case shuffle is True
             self._sampler.set_epoch(curr_epoch)
 
+            # effectively update ref policy.
+            merge_lora_adapter(self._policy)
+            clear_lora_adapter(self._policy)
+
             for _, batch in enumerate(self._dataloader):
                 batch = batch["tokens"].to(self._device)
                 _, context_length = batch.shape
@@ -958,7 +984,7 @@ def recipe_main(cfg: DictConfig) -> None:
         - Parameters specified in config (see available configs through ``tune ls``)
         - Overwritten by arguments from the command-line
     """
-    config.log_config(recipe_name="PPOQLoRAFullFinetuneRecipeSingleDevice", cfg=cfg)
+    config.log_config(recipe_name="PPOQLoRAFinetuneRecipeSingleDevice", cfg=cfg)
     recipe = PPOQLoRAFinetuneRecipeSingleDevice(cfg=cfg)
     recipe.setup(cfg=cfg)
     recipe.train()
