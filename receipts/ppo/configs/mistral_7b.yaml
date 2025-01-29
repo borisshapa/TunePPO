@@ -111,7 +111,7 @@ value_checkpointer:
   output_dir: ${output_dir}/value
   model_type: REWARD
 
-seed: null
+seed: 0xD1CE
 shuffle: True
 
 # Training env
