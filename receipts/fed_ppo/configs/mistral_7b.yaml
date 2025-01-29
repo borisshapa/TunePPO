@@ -29,7 +29,7 @@
 
 # Change those to your preference. Do not do that via CLI!
 prefix: /home/arqa39/.torchtune
-output_dir: ${prefix}/ppo/mistral_7b
+output_dir: ${prefix}/fed_ppo/mistral_7b
 
 
 # Tokenizer
@@ -173,7 +173,7 @@ metric_logger:
   _component_: torchtune.training.metric_logging.WandBLogger
   log_dir: ${prefix}
   entity: RADFAN
-  project: PPO
+  project: FedPPO
   group: null 
   name: Mistral-7B-QLoRA
 

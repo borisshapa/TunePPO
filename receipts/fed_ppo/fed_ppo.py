@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, Iterable, Iterator
 from warnings import warn
 
 import torch
+import torch.distributed as dist
 from omegaconf import DictConfig, ListConfig
 from torch import nn
 from torch.optim import Optimizer
@@ -32,6 +33,7 @@ from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.rlhf import PPOStats, Trajectory
 from torchtune.training.checkpointing import Checkpointer
 from torchtune.training.metric_logging import MetricLoggerInterface
+from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
 log = utils.get_logger("DEBUG")
@@ -112,7 +114,7 @@ def clear_lora_adapter(model: nn.Module) -> nn.Module:
 
     return model
 
-class PPOQLoRARecipe(FTRecipeInterface):
+class FedPPORecipe(FTRecipeInterface):
     """
     Full finetuning recipe for RLHF with PPO for dense transformer-based LLMs such as LLama2. This recipe is optimized
     for single GPU training. Training on CPU is not supported.
@@ -186,7 +188,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
         """
         Initialize basic things.
         """
-        # set dtype
+        # set device
         self._device = utils.get_device(device=cfg.device)
         if self._device.type != "cuda":
             raise RuntimeError("CUDA support. Only.")
@@ -226,11 +228,10 @@ class PPOQLoRARecipe(FTRecipeInterface):
         """
         Sets up the recipe state correctly.
         """
-        # set metric logger
-        self._metric_logger: MetricLoggerInterface = config.instantiate(cfg.metric_logger)
-
+        self._metric_logger = self._setup_metric_logger(cfg.metric_logger)
         # log the final config with parameter override
-        self._metric_logger.log_config(cfg)
+        if dist.get_rank() == 0:
+            self._metric_logger.log_config(cfg)
 
         # setup checkpointers
         self._checkpointer: Checkpointer = config.instantiate(
@@ -280,6 +281,21 @@ class PPOQLoRARecipe(FTRecipeInterface):
         # set other parameters
         self._setup_batch_sizes(cfg)
         self._setup_hyperparameters(cfg)
+
+    def _setup_metric_logger(
+        self,
+        cfg_logger: DictConfig
+    ) -> MetricLoggerInterface:
+        """
+        Sets up metric logger for each process.
+        """
+        if name := cfg_logger.get("name"):
+            name = f"{name}-r{dist.get_rank()}/{dist.get_world_size()}"
+        logger: MetricLoggerInterface = config.instantiate(
+            cfg_logger,
+            name=name
+        )
+        return logger
 
     def _setup_tokenizer(self, cfg: DictConfig) -> ModelTokenizer:
         """
@@ -400,8 +416,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
                 f"the number of batches in the dataset ({batches_per_epoch}). "
                 f"Intermediate checkpoints will only be saved every {batches_per_epoch} steps."
             )
-        log.info(
-            f"Total steps to run: {self._total_steps}, Total epochs to run: {self._total_epochs}"
+        log_rank_zero(
+            log, f"Total steps to run: {self._total_steps}, Total epochs to run: {self._total_epochs}"
         )
 
     def _setup_models(
@@ -453,19 +469,21 @@ class PPOQLoRARecipe(FTRecipeInterface):
         training.validate_expected_param_dtype(
             valmod.named_parameters(), dtype=self._dtype
         )
-        log.info(f"Models are initialized with {self._dtype} precision.")
+        log_rank_zero(
+            log, f"Models are initialized with {self._dtype} precision."
+        )
 
         # Compile model, if enabled.
         if compile_model:
             backend = os.environ.get("TORCH_COMPILE_BACKEND", "inductor")
-            log.info(
-                "NOTE: torch.compile is enabled and model would be compiled in first forward."
+            log_rank_zero(
+                log, "NOTE: torch.compile is enabled and model would be compiled in first forward."
                 "Expect a relatively slow first iteration."
             )
             policy.compile(backend=backend)
             valmod.compile(backend=backend)
 
-        if self._device.type == "cuda":
+        if dist.get_rank() == 0:
             memory_stats = training.get_memory_stats(device=self._device)
             training.log_memory_stats(memory_stats)
 
@@ -479,7 +497,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
             cfg_optimizer,
             chain(self._policy.parameters(), self._valmod.parameters()),
         )
-        log.info("Optimizer is set up.")
+        log_rank_zero(log, "Optimizer is set up.")
         return optimizer
 
     def _setup_in_bwd_optimizer(self, cfg_optimizer: DictConfig) -> None:
@@ -500,7 +518,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
         training.register_optim_in_bwd_hooks(
             model=self._valmod, optim_dict=optim_dict
         )
-        log.info("In-backward optimizers are set up.")
+        log_rank_zero(log, "In-backward optimizers are set up.")
 
     def _setup_data(
         self,
@@ -521,13 +539,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
         else:
             ds = config.instantiate(cfg_dataset, tokenizer=tokenizer)
 
-        sampler = DistributedSampler(
-            ds,
-            num_replicas=1,
-            rank=0,
-            shuffle=shuffle,
-            seed=0,
-        )
+        sampler = DistributedSampler(ds, shuffle=shuffle)
         dataloader = DataLoader(
             dataset=ds,
             sampler=sampler,
@@ -727,9 +739,9 @@ class PPOQLoRARecipe(FTRecipeInterface):
         training_completed = False
         pbar = tqdm(total=self._total_steps, initial=self._steps_run)
         for curr_epoch in range(self._epochs_run, self._total_epochs):
-            # Update the sampler to ensure data is correctly shuffled across epochs
-            # in case shuffle is True
-            self._sampler.set_epoch(curr_epoch)
+            # Ensure data is not reshuffled at new epoch so the agents are
+            # trained on non-overlapping data.
+            self._sampler.set_epoch(0)
 
             for _, batch in enumerate(self._dataloader):
                 batch = batch["tokens"].to(self._device)
@@ -835,7 +847,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
             self._epochs_run += 1
 
             if training_completed:
-                self.save_checkpoint(curr_epoch)
+                if dist.get_rank() == 0:
+                    self.save_checkpoint(curr_epoch)
                 return
 
     def _ppo_step(
@@ -984,6 +997,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
 
     def cleanup(self, **kwargs) -> None:
         self._metric_logger.close()
+        dist.destroy_process_group()
 
 
 @config.parse
@@ -995,8 +1009,9 @@ def recipe_main(cfg: DictConfig) -> None:
         - Parameters specified in config (see available configs through ``tune ls``)
         - Overwritten by arguments from the command-line
     """
-    config.log_config(recipe_name="PPOQLoRARecipe", cfg=cfg)
-    recipe = PPOQLoRARecipe(cfg=cfg)
+    dist.init_process_group()
+    config.log_config(recipe_name="FedPPORecipe", cfg=cfg)
+    recipe = FedPPORecipe(cfg=cfg)
     recipe.setup(cfg=cfg)
     recipe.train()
     recipe.cleanup()
