@@ -29,7 +29,7 @@
 
 # Change those to your preference. Do not do that via CLI!
 prefix: /home/arqa39/.torchtune
-output_dir: ${prefix}/ppo_qlora/mistral_7b
+output_dir: ${prefix}/ppo/mistral_7b
 
 
 # Tokenizer
@@ -111,7 +111,7 @@ value_checkpointer:
   output_dir: ${output_dir}/value
   model_type: REWARD
 
-seed: null
+seed: 0xD1CE
 shuffle: True
 
 # Training env
@@ -128,7 +128,7 @@ gradient_accumulation_steps: 1  # Use to increase effective batch size
 compile: True  # torch.compile the model + loss, True increases speed + decreases memory
 optimizer:
   _component_: bitsandbytes.optim.PagedAdamW
-  lr: 3e-6
+  lr: 1e-4
 optimizer_in_bwd: True  # True saves memory. Requires gradient_accumulation_steps=1
 log_peak_memory_stats: True
 enable_activation_checkpointing: True  # True reduces memory
@@ -173,8 +173,9 @@ metric_logger:
   _component_: torchtune.training.metric_logging.WandBLogger
   log_dir: ${prefix}
   entity: RADFAN
-  project: Torchtune
-  group: PPO
+  project: PPO
+  group: null 
   name: Mistral-7B-QLoRA
 
 log_every_n_steps: 1
+update_ref_policy_every_n_steps: 1

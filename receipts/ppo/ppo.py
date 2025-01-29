@@ -6,7 +6,7 @@ import os
 import sys
 from functools import partial
 from itertools import chain
-from typing import Any, Dict, List, Optional, Tuple, Iterable
+from typing import Any, Dict, List, Optional, Tuple, Iterable, Iterator
 from warnings import warn
 
 import torch
@@ -14,17 +14,19 @@ from omegaconf import DictConfig, ListConfig
 from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
+from torchao.dtypes import NF4Tensor
 from torchtune import config, generation, modules, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.datasets import ConcatDataset
 from torchtune.modules.peft import (
     disable_adapter,
     get_adapter_params,
-    get_adapter_state_dict,
     get_lora_module_names,
     get_merged_lora_ckpt,
     set_trainable_params,
 )
+from torchtune.modules.peft import LoRALinear
+from torchtune.modules.peft.lora import to_nf4
 from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.rlhf import PPOStats, Trajectory
@@ -67,15 +69,9 @@ def get_merged_adapter_state_dict(
     module_adapter_config: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Constructs model merged with adapter state dict. The resulting state
-    dict contains the following information:
-    - Merged weights with key MODEL_KEY
-    - Adapter weights with key ADAPTER_KEY
-    - Adapter config with key ADAPTER_CONFIG
+    Constructs model merged with adapter state dict.
     """
     return {
-        training.ADAPTER_KEY: get_adapter_state_dict(module.state_dict()),
-        training.ADAPTER_CONFIG: module_adapter_config,
         training.MODEL_KEY: get_merged_lora_ckpt(
             state_dict  = {k: v.cpu() for k, v in module.state_dict().items()},
             rank        = module_adapter_config["r"],
@@ -83,7 +79,40 @@ def get_merged_adapter_state_dict(
         )
     }
 
-class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
+def get_lora_modules(model: nn.Module) -> Iterator[LoRALinear]:
+    """
+    Returns an iterator over all LoRA modules in the network.
+    """
+    for name, module in model.named_modules():
+        if isinstance(module, LoRALinear):
+            yield module
+
+@torch.no_grad()
+def merge_lora_adapter(model: nn.Module) -> nn.Module:
+    """
+    Merges (Q)LoRA adapters into base model in-place.
+    """
+    for m in get_lora_modules(model):
+        if isinstance(m.weight, NF4Tensor):
+            dequantw = m.weight.get_original_weight()
+            dequantw += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
+            m.weight = nn.Parameter(to_nf4(dequantw))
+        else:
+            m.weight += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
+
+    return model
+
+@torch.no_grad()
+def clear_lora_adapter(model: nn.Module) -> nn.Module:
+    """
+    Reinitialize LoRA adapters.
+    """
+    for m in get_lora_modules(model):
+        m.initialize_parameters()
+
+    return model
+
+class PPOQLoRARecipe(FTRecipeInterface):
     """
     Full finetuning recipe for RLHF with PPO for dense transformer-based LLMs such as LLama2. This recipe is optimized
     for single GPU training. Training on CPU is not supported.
@@ -185,6 +214,9 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
         self._steps_run     = 0
         self._total_epochs  = 0
         self._epochs_run    = 0
+
+        # reference policy update schedule
+        self._update_ref_policy_every_n_steps = cfg.get("update_ref_policy_every_n_steps", 1)
 
         # save adapter configs for checkpointing
         self._policy_adapter_config = get_adapter_config(cfg.policy)
@@ -790,6 +822,11 @@ class PPOQLoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
                 self.cleanup_after_step(
                     trajectory, ppo_stats, advantages, returns, kl, kl_rewards
                 )
+                if self._steps_run % self._update_ref_policy_every_n_steps == 0:
+                    # effectively update reference policy.
+                    merge_lora_adapter(self._policy)
+                    clear_lora_adapter(self._policy)
+
                 pbar.update(1)
                 if self._steps_run == self._total_steps:
                     training_completed = True
@@ -958,8 +995,8 @@ def recipe_main(cfg: DictConfig) -> None:
         - Parameters specified in config (see available configs through ``tune ls``)
         - Overwritten by arguments from the command-line
     """
-    config.log_config(recipe_name="PPOQLoRAFullFinetuneRecipeSingleDevice", cfg=cfg)
-    recipe = PPOQLoRAFinetuneRecipeSingleDevice(cfg=cfg)
+    config.log_config(recipe_name="PPOQLoRARecipe", cfg=cfg)
+    recipe = PPOQLoRARecipe(cfg=cfg)
     recipe.setup(cfg=cfg)
     recipe.train()
     recipe.cleanup()
