@@ -112,7 +112,7 @@ def clear_lora_adapter(model: nn.Module) -> nn.Module:
 
     return model
 
-class ShiftingPPOQLoRARecipe(FTRecipeInterface):
+class PPOQLoRARecipe(FTRecipeInterface):
     """
     Full finetuning recipe for RLHF with PPO for dense transformer-based LLMs such as LLama2. This recipe is optimized
     for single GPU training. Training on CPU is not supported.
@@ -995,8 +995,8 @@ def recipe_main(cfg: DictConfig) -> None:
         - Parameters specified in config (see available configs through ``tune ls``)
         - Overwritten by arguments from the command-line
     """
-    config.log_config(recipe_name="ShiftingPPOQLoRARecipe", cfg=cfg)
-    recipe = ShiftingPPOQLoRARecipe(cfg=cfg)
+    config.log_config(recipe_name="PPOQLoRARecipe", cfg=cfg)
+    recipe = PPOQLoRARecipe(cfg=cfg)
     recipe.setup(cfg=cfg)
     recipe.train()
     recipe.cleanup()
