@@ -215,6 +215,9 @@ class ShiftingPPOQLoRARecipe(FTRecipeInterface):
         self._total_epochs  = 0
         self._epochs_run    = 0
 
+        # reference policy update schedule
+        self._update_ref_policy_every_n_steps = cfg.get("update_ref_policy_every_n_steps", 1)
+
         # save adapter configs for checkpointing
         self._policy_adapter_config = get_adapter_config(cfg.policy)
         self._valmod_adpater_config = get_adapter_config(cfg.valmod)
@@ -728,10 +731,6 @@ class ShiftingPPOQLoRARecipe(FTRecipeInterface):
             # in case shuffle is True
             self._sampler.set_epoch(curr_epoch)
 
-            # effectively update ref policy.
-            merge_lora_adapter(self._policy)
-            clear_lora_adapter(self._policy)
-
             for _, batch in enumerate(self._dataloader):
                 batch = batch["tokens"].to(self._device)
                 _, context_length = batch.shape
@@ -823,6 +822,11 @@ class ShiftingPPOQLoRARecipe(FTRecipeInterface):
                 self.cleanup_after_step(
                     trajectory, ppo_stats, advantages, returns, kl, kl_rewards
                 )
+                if self._steps_run % self._update_ref_policy_every_n_steps == 0:
+                    # effectively update reference policy.
+                    merge_lora_adapter(self._policy)
+                    clear_lora_adapter(self._policy)
+
                 pbar.update(1)
                 if self._steps_run == self._total_steps:
                     training_completed = True
