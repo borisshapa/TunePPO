@@ -4,6 +4,7 @@
 import math
 import os
 import sys
+import wandb
 from functools import partial
 from itertools import chain
 from typing import Any, Dict, List, Optional, Tuple, Iterable, Iterator
@@ -32,7 +33,7 @@ from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.rlhf import PPOStats, Trajectory
 from torchtune.training.checkpointing import Checkpointer
-from torchtune.training.metric_logging import MetricLoggerInterface
+from torchtune.training.metric_logging import WandBLogger
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
@@ -228,7 +229,7 @@ class FedPPORecipe(FTRecipeInterface):
         """
         Sets up the recipe state correctly.
         """
-        self._metric_logger = self._setup_metric_logger(cfg.metric_logger)
+        self._metric_logger = self._setup_wandb_logger(cfg.wandb_logger)
         # log the final config with parameter override
         if dist.get_rank() == 0:
             self._metric_logger.log_config(cfg)
@@ -282,20 +283,26 @@ class FedPPORecipe(FTRecipeInterface):
         self._setup_batch_sizes(cfg)
         self._setup_hyperparameters(cfg)
 
-    def _setup_metric_logger(
+    def _setup_wandb_logger(
         self,
         cfg_logger: DictConfig
-    ) -> MetricLoggerInterface:
+    ) -> WandBLogger:
         """
         Sets up metric logger for each process.
         """
+        # set distinct run names for each agent
         if name := cfg_logger.get("name"):
-            name = f"{name}-r{dist.get_rank()}/{dist.get_world_size()}"
-        logger: MetricLoggerInterface = config.instantiate(
-            cfg_logger,
-            name=name
+            name = f"{name}-{dist.get_rank()}/{dist.get_world_size() - 1}"
+
+        # initialize wandb in advance to have it for each agent
+        wandb.init(
+            dir=cfg_logger.dir,
+            entity=cfg_logger.entity,
+            project=cfg_logger.project,
+            group=cfg_logger.group,
+            name=name,
         )
-        return logger
+        return WandBLogger(**cfg_logger)
 
     def _setup_tokenizer(self, cfg: DictConfig) -> ModelTokenizer:
         """

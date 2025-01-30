@@ -28,7 +28,7 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-prefix: /home/arqa39/.torchtune
+prefix: /home/vladimirovar/.torchtune
 output_dir: ${prefix}/fed_ppo/mistral_7b
 
 
@@ -125,7 +125,7 @@ ppo_batch_size: 32
 gradient_accumulation_steps: 1  # Use to increase effective batch size
 
 # Memory management and performance
-compile: True  # torch.compile the model + loss, True increases speed + decreases memory
+compile: False # torch.compile the model + loss, True increases speed + decreases memory
 optimizer:
   _component_: bitsandbytes.optim.PagedAdamW
   lr: 1e-4
@@ -169,13 +169,12 @@ loss:
 kl_coeff: 0.01
 
 # Logging
-metric_logger:
-  _component_: torchtune.training.metric_logging.WandBLogger
-  log_dir: ${prefix}
+wandb_logger:
+  dir: ${prefix}
   entity: RADFAN
-  project: FedPPO
-  group: null 
+  project: TestFedPPO
+  group: QLoRA
   name: Mistral-7B-QLoRA
 
 log_every_n_steps: 1
-update_ref_policy_every_n_steps: 1
+update_ref_policy_every_n_steps: 39
