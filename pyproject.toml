@@ -1,0 +1,40 @@
+# -------------------------- Project Specification -------------------------- #
+[project]
+name = "ppo-tune"
+version = "0.0.1"
+authors = [
+    {name = "Arkadiy Vladimirov", email = "ark.vladimirov@outlook.com"},
+]
+requires-python = ">=3.10"
+dependencies = [
+	# pytorch framework family
+	"torch",
+	"torchvision",
+	"torchao",
+	"torchtune",
+
+	# huggingface framework family
+	"bitsandbytes",
+
+	# logging
+	"wandb",
+]
+
+# --------------------------- Build Specification --------------------------- #
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = [""]
+include = ["ppotune"]
+
+# -------------------------- Tooling Specification -------------------------- #
+[tool.ruff]
+line-length = 99
+
+[tool.ruff.lint]
+select = [
+	"E", "W", # pycodestyle rule set
+	"F", # pyflakes rule set
+]
