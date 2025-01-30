@@ -20,6 +20,7 @@ from torchao.dtypes import NF4Tensor
 from torchtune import config, generation, modules, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.datasets import ConcatDataset
+from torchtune.modules import TransformerDecoder
 from torchtune.modules.peft import (
     disable_adapter,
     get_adapter_params,
@@ -36,6 +37,8 @@ from torchtune.training.checkpointing import Checkpointer
 from torchtune.training.metric_logging import WandBLogger
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
+
+from ppotune.utils import DistributedPolicyMixture, MeanReduce
 
 log = utils.get_logger("DEBUG")
 
@@ -257,6 +260,7 @@ class FedPPORecipe(FTRecipeInterface):
             compile_model       = cfg.compile,
             enable_activation_checkpointing = cfg.enable_activation_checkpointing,
         )
+        self._ref_policy = DistributedPolicyMixture(self._policy, MeanReduce())
 
         # setup tokenizer
         self._tokenizer = self._setup_tokenizer(cfg)
@@ -642,7 +646,7 @@ class FedPPORecipe(FTRecipeInterface):
 
         # step 2.1 estimate logprobs of the responses using the reference policy
         with torch.no_grad(), disable_adapter(self._policy):
-            ref_logits = self._policy(
+            ref_logits = self._ref_policy(
                 query_responses, input_pos=position_ids, mask=masks
             )
         ref_logits = rlhf.truncate_sequence_for_logprobs(ref_logits, context_length)
