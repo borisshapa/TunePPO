@@ -435,7 +435,7 @@ class FedPPORecipe(FTRecipeInterface):
         valmod_state_dict: Dict[str, Any],
         compile_model: bool,
         enable_activation_checkpointing: bool,
-    ) -> Tuple[nn.Module, nn.Module, nn.Module]:
+        ) -> Tuple[TransformerDecoder, TransformerDecoder]:
         """
         Sets up the policy/reference model and reward/value model.
         """
