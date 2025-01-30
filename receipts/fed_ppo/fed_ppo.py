@@ -399,7 +399,7 @@ class FedPPORecipe(FTRecipeInterface):
                 "Please set gradient_accumulation_steps=1, or optimizer_in_bwd=False."
             )
 
-        self._total_steps = cfg.num_steps // self.batch_size
+        self._total_steps = cfg.num_steps // (self.batch_size * dist.get_world_size())
         batches_per_epoch = max(
             1, len(self._dataloader)
         )  # when we only have a single batch in the dataset
@@ -546,7 +546,11 @@ class FedPPORecipe(FTRecipeInterface):
         else:
             ds = config.instantiate(cfg_dataset, tokenizer=tokenizer)
 
-        sampler = DistributedSampler(ds, shuffle=shuffle)
+        sampler = DistributedSampler(
+            dataset=ds,
+            shuffle=shuffle,
+            drop_last=True
+        )
         dataloader = DataLoader(
             dataset=ds,
             sampler=sampler,
