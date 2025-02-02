@@ -173,8 +173,8 @@ wandb_logger:
   dir: ${prefix}
   entity: RADFAN
   project: FedPPO
-  group: MeanReference
-  name: Mistral-7B-LoRA
+  group: MeanReference-0.8
+  name: Mistral-7B-LoRA-MeanRef-0.8-U13
 
 log_every_n_steps: 1
 update_ref_policy_every_n_steps: 13

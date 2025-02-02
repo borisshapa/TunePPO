@@ -71,10 +71,20 @@ class IdentityReduce(Reducer):
 
 class MeanReduce(Reducer):
     """
-    Averages all tensors.
+    Averages all tensors with preference towards self if given i.e.
+        alpha * self + (1 - alpha) * mean(others)
     """
+    def __init__(self, alpha: tp.Optional[float] = None) -> None:
+        if alpha:
+            self._alpha = alpha
+        else:
+            self._alpha = 1.0 / dist.get_world_size()
+
     def forward(self, tensors: tp.Iterable[torch.Tensor]) -> torch.Tensor:
-        return torch.stack(tensors).mean(dim=0)
+        rank = dist.get_rank()
+        this = tensors[rank]
+        others = tensors[0 : rank] + tensors[rank + 1 :]
+        return self._alpha * this + (1.0 - self._alpha) * torch.stack(others).mean(dim=0)
 
 
 # ----------------------- Distributed Policy Mixture ------------------------ #

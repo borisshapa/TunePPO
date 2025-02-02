@@ -260,7 +260,7 @@ class FedPPORecipe(FTRecipeInterface):
             compile_model       = cfg.compile,
             enable_activation_checkpointing = cfg.enable_activation_checkpointing,
         )
-        self._ref_policy = DistributedPolicyMixture(self._policy, MeanReduce())
+        self._ref_policy = DistributedPolicyMixture(self._policy, MeanReduce(0.8))
 
         # setup tokenizer
         self._tokenizer = self._setup_tokenizer(cfg)
