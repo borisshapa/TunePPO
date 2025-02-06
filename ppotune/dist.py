@@ -51,40 +51,29 @@ def all_to_all(tensors: list[torch.Tensor]) -> list[torch.Tensor]:
     return output
 
 
-# --------------------------------- Reducers -------------------------------- #
-class Reducer:
+# --------------------- Distributed Special Utilities ----------------------- #
+def rank_preferred_mean(
+    tensors: tp.Iterable[torch.Tensor],
+    self_preference: tp.Optional[float] = None
+) -> torch.Tensor:
     """
-    Base class for tensor iterable reducers.
+    Computes a weighted mean of a list of tensors, giving preference to the
+    tensor corresponding to the current process rank.
     """
-    def forward(self, _: tp.Iterable[torch.Tensor]) -> torch.Tensor:
-       raise NotImplementedError
+    assert len(tensors) == dist.get_world_size()
 
-    def __call__(self, tensors: tp.Iterable[torch.Tensor]) -> torch.Tensor:
-        return self.forward(tensors)
+    if dist.get_world_size() == 1:
+        return tensors[0]
 
-class IdentityReduce(Reducer):
-    """
-    Leaves only local rank tensor.
-    """
-    def forward(self, tensors: tp.Iterable[torch.Tensor]) -> torch.Tensor:
-        return tensors[dist.get_rank()]
+    if not self_preference:
+        return tensors.mean()
 
-class MeanReduce(Reducer):
-    """
-    Averages all tensors with preference towards self if given i.e.
-        alpha * self + (1 - alpha) * mean(others)
-    """
-    def __init__(self, alpha: tp.Optional[float] = None) -> None:
-        if alpha:
-            self._alpha = alpha
-        else:
-            self._alpha = 1.0 / dist.get_world_size()
+    assert (0.0 <= self_preference) and (self_preference <= 1.0)
 
-    def forward(self, tensors: tp.Iterable[torch.Tensor]) -> torch.Tensor:
-        rank = dist.get_rank()
-        this = tensors[rank]
-        others = tensors[0 : rank] + tensors[rank + 1 :]
-        return self._alpha * this + (1.0 - self._alpha) * torch.stack(others).mean(dim=0)
+    rank = dist.get_rank()
+    this = tensors[rank]
+    others = tensors[0 : rank] + tensors[rank + 1 :]
+    return self_preference * this + (1.0 - self_preference) * torch.stack(others).mean(dim=0)
 
 
 # ----------------------- Distributed Policy Mixture ------------------------ #
@@ -95,10 +84,10 @@ class DistributedPolicyMixture:
     def __init__(
         self,
         local_policy: TransformerDecoder,
-        reduce: Reducer
+        self_preference : tp.Optional[float] = None
     ) -> None:
         self._policy = local_policy
-        self._reduce = reduce
+        self._preference = self_preference
 
     def forward(
         self,
@@ -137,8 +126,7 @@ class DistributedPolicyMixture:
             for tokens, pos, mask in zip(peer_tokens, peer_pos, peer_masks)
         ]
         peer_logits_responded = all_to_all(peer_logits_requested)
-
-        return self._reduce(peer_logits_responded)
+        return rank_preferred_mean(peer_logits_responded, self._preference)
 
     def __call__(
         self,

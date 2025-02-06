@@ -33,7 +33,7 @@ from torchtune.training.metric_logging import WandBLogger
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
-from ppotune.dist import DistributedPolicyMixture, MeanReduce
+from ppotune.dist import DistributedPolicyMixture
 from ppotune.peft import (
     get_adapter_config,
     get_merged_adapter_state_dict,
@@ -194,7 +194,7 @@ class FedPPORecipe(FTRecipeInterface):
             compile_model       = cfg.compile,
             enable_activation_checkpointing = cfg.enable_activation_checkpointing,
         )
-        self._ref_policy = DistributedPolicyMixture(self._policy, MeanReduce(0.8))
+        self._ref_policy = DistributedPolicyMixture(self._policy, cfg.kl.self_attraction)
 
         # setup tokenizer
         self._tokenizer = self._setup_tokenizer(cfg)
@@ -275,7 +275,7 @@ class FedPPORecipe(FTRecipeInterface):
         generation hyperparameters, reward masking hyperparameters, and stop token ids.
         """
         # KL-penalty coefficient
-        self._kl_coeff = cfg.kl_coeff
+        self._kl_coeff = cfg.kl.coeff
 
         # GAE hyperparameters
         self._gamma = cfg.gamma
