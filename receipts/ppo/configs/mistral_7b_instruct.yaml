@@ -15,12 +15,12 @@
 #   pip install bitsandbytes
 #
 # To launch on N devices (starting from 1), run the following command from repo root:
-#   tune run receipts/ppo.py --nproc-per-node N --config configs/mistral_7b_instruct.yaml
+#   tune run receipts/ppo.py --nproc_per_node N --config configs/mistral_7b_instruct.yaml
 #
 # You can add specific overrides through the command line. For example
 # to override the checkpointer directory while launching training
 # you can run:
-#   tune run receipts/ppo.py --nproc-per-node N --config configs/mistral_7b_instruct.yaml checkpointer.checkpoint_dir=<YOUR_CHECKPOINT_DIR>
+#   tune run receipts/ppo.py --nproc_per_node N --config configs/mistral_7b_instruct.yaml checkpointer.checkpoint_dir=<YOUR_CHECKPOINT_DIR>
 #
 
 # NOTE: Use full paths only. '~' would not expand.
