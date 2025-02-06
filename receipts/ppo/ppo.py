@@ -7,7 +7,7 @@ import sys
 import wandb
 from functools import partial
 from itertools import chain
-from typing import Any, Dict, List, Optional, Tuple, Iterable, Iterator
+from typing import Any, Dict, List, Optional, Tuple
 from warnings import warn
 
 import torch
@@ -16,7 +16,6 @@ from omegaconf import DictConfig, ListConfig
 from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, DistributedSampler
-from torchao.dtypes import NF4Tensor
 from torchtune import config, generation, modules, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.datasets import ConcatDataset
@@ -24,12 +23,8 @@ from torchtune.modules import TransformerDecoder
 from torchtune.modules.peft import (
     disable_adapter,
     get_adapter_params,
-    get_lora_module_names,
-    get_merged_lora_ckpt,
     set_trainable_params,
 )
-from torchtune.modules.peft import LoRALinear
-from torchtune.modules.peft.lora import to_nf4
 from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.rlhf import PPOStats, Trajectory
@@ -38,85 +33,17 @@ from torchtune.training.metric_logging import WandBLogger
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
-from ppotune.utils import DistributedPolicyMixture, MeanReduce
+from ppotune.dist import DistributedPolicyMixture, MeanReduce
+from ppotune.peft import (
+    get_adapter_config,
+    get_merged_adapter_state_dict,
+    merge_lora_adapter,
+    clear_lora_adapter,
+)
+from ppotune.utils import grad_norm
 
 log = utils.get_logger("DEBUG")
 
-@torch.no_grad()
-def grad_norm(parameters: Iterable[torch.Tensor]) -> torch.Tensor:
-    """
-    Computes gradient l2-norm of parameters given.
-    """
-    total_norm = 0.0
-    for param in parameters:
-        if param.grad is not None:
-            param_norm = param.grad.data.norm(2)
-            total_norm += param_norm.item() ** 2
-    total_norm = total_norm ** 0.5
-    return total_norm
-
-def get_adapter_config(cfg_model: DictConfig) -> Dict[str, Any]:
-    """
-    Retrieves adapter config from model config suitable for checkpointing.
-    """
-    return {
-        "r": cfg_model.lora_rank,
-        "lora_alpha": cfg_model.lora_alpha,
-        "target_modules": get_lora_module_names(
-            list(cfg_model.lora_attn_modules),
-            getattr(cfg_model, "apply_lora_to_mlp", False),
-            getattr(cfg_model, "apply_lora_to_output", False)
-        ),
-        "peft_type": "LORA",
-    }
-
-def get_merged_adapter_state_dict(
-    module: nn.Module,
-    module_adapter_config: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Constructs model merged with adapter state dict.
-    """
-    return {
-        training.MODEL_KEY: get_merged_lora_ckpt(
-            state_dict  = {k: v.cpu() for k, v in module.state_dict().items()},
-            rank        = module_adapter_config["r"],
-            alpha       = module_adapter_config["lora_alpha"],
-        )
-    }
-
-def get_lora_modules(model: nn.Module) -> Iterator[LoRALinear]:
-    """
-    Returns an iterator over all LoRA modules in the network.
-    """
-    for name, module in model.named_modules():
-        if isinstance(module, LoRALinear):
-            yield module
-
-@torch.no_grad()
-def merge_lora_adapter(model: nn.Module) -> nn.Module:
-    """
-    Merges (Q)LoRA adapters into base model in-place.
-    """
-    for m in get_lora_modules(model):
-        if isinstance(m.weight, NF4Tensor):
-            dequantw = m.weight.get_original_weight()
-            dequantw += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
-            m.weight = nn.Parameter(to_nf4(dequantw))
-        else:
-            m.weight += (m.alpha / m.rank) * m.lora_b.weight @ m.lora_a.weight
-
-    return model
-
-@torch.no_grad()
-def clear_lora_adapter(model: nn.Module) -> nn.Module:
-    """
-    Reinitialize LoRA adapters.
-    """
-    for m in get_lora_modules(model):
-        m.initialize_parameters()
-
-    return model
 
 class FedPPORecipe(FTRecipeInterface):
     """
