@@ -6,7 +6,7 @@
 # This config assumes that you've run the following command before launching
 # this run: (take a look what prefix is down the config)
 #   tune download weqweasdas/RM-Mistral-7B --output-dir ${prefix}/models/RM-Mistral-7B/
-#   tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct-v0.2/ --ignore-patterns "*.safetensors" --hf-token <HF_TOKEN>
+#   tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct-v0.2/ --ignore-patterns "*.safetensors"
 #
 # You'll also need to ensure that {output_dir} exists beforehand, as checkpoints for policy and
 # value models as well as WandBLogger logs are saved in sub-folders.
@@ -29,7 +29,7 @@
 
 # Change those to your preference. Do not do that via CLI!
 prefix: /home/arqa39/.torchtune
-output_dir: ${prefix}/fed_ppo/mistral_7b
+output_dir: ${prefix}/checkpoints/Mistral-7B-Instruct-LoRA-MeanRef-0.8-U13
 
 
 # Tokenizer
@@ -173,8 +173,8 @@ wandb_logger:
   dir: ${prefix}
   entity: RADFAN
   project: FedPPO
-  group: MeanReference-0.8
-  name: Mistral-7B-LoRA-MeanRef-0.8-U13
+  group: Instruct-MeanReference-0.8
+  name: Mistral-7B-Base-LoRA-MeanRef-0.8-U13
 
 log_every_n_steps: 1
 update_ref_policy_every_n_steps: 13
