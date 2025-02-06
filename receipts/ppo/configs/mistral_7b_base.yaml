@@ -14,17 +14,18 @@
 # you can install it with
 #   pip install bitsandbytes
 #
-# To launch on a single device, run the following command from root:
-#   tune run receipts/ppo.py --config configs/mistral_7b_full.yaml
+# To launch on N devices (starting from 1), run the following command from repo root:
+#   tune run receipts/ppo.py --nproc-per-node N --config configs/mistral_7b_base.yaml
 #
 # You can add specific overrides through the command line. For example
 # to override the checkpointer directory while launching training
 # you can run:
-#   tune run receipts/ppo.py --config configs/mistral_7b_qlora.yaml checkpointer.checkpoint_dir=<YOUR_CHECKPOINT_DIR>
+#   tune run receipts/ppo.py --nproc-per-node N --config configs/mistral_7b_base.yaml checkpointer.checkpoint_dir=<YOUR_CHECKPOINT_DIR>
 #
 
 # NOTE: Use full paths only. '~' would not expand.
-# NOTE: Do not override from CLI variables others depend on. The dependants would not be updated.
+# NOTE: Do not override from CLI variables other variables depend on. The dependants would not be
+# updated.
 
 
 # Change those to your preference. Do not do that via CLI!
