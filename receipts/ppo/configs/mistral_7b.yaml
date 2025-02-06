@@ -6,7 +6,7 @@
 # This config assumes that you've run the following command before launching
 # this run: (take a look what prefix is down the config)
 #   tune download weqweasdas/RM-Mistral-7B --output-dir ${prefix}/models/RM-Mistral-7B/
-#   tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct-v0.2/ --ignore-patterns "*.safetensors" --hf-token <HF_TOKEN>
+#   tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-v0.2/
 #
 # You'll also need to ensure that {output_dir} exists beforehand, as checkpoints for policy and
 # value models as well as WandBLogger logs are saved in sub-folders.
@@ -29,13 +29,13 @@
 
 # Change those to your preference. Do not do that via CLI!
 prefix: /home/arqa39/.torchtune
-output_dir: ${prefix}/ppo/mistral_7b
+output_dir: ${prefix}/checkpoints/Mistral-7B-Base-LoRA-MeanRef-0.8-U13
 
 
 # Tokenizer
 tokenizer:
   _component_: torchtune.models.mistral.mistral_tokenizer
-  path: ${prefix}/models/Mistral-7B-Instruct-v0.2/tokenizer.model
+  path: ${prefix}/models/Mistral-7B-v0.2/tokenizer.model
   max_seq_len: null
 
 # Dataset
@@ -56,7 +56,7 @@ policy:
   lora_rank: 64  # higher increases accuracy and memory
   lora_alpha: 16  # usually alpha=2*rank
   lora_dropout: 0.0
-  quantize_base: True # stands for 'Q' in QLoRA
+  quantize_base: False # stands for 'Q' in QLoRA
 
 # we need to manually build the mistral classifier model
 # because our reward model checkpoint has a larger vocabulary size (due to an added padding token)
@@ -81,17 +81,17 @@ valmod:
   lora_rank: 16
   lora_alpha: 32
   lora_dropout: 0.0
-  quantize_base: True
+  quantize_base: False
 
 # main checkpointer is for the policy model
 checkpointer:
   _component_: torchtune.training.FullModelHFCheckpointer
-  checkpoint_dir: ${prefix}/models/Mistral-7B-Instruct-v0.2/
+  checkpoint_dir: ${prefix}/models/Mistral-7B-v0.2/
   checkpoint_files:
     [
-      "pytorch_model-00001-of-00003.bin",
-      "pytorch_model-00002-of-00003.bin",
-      "pytorch_model-00003-of-00003.bin",
+      "model-00001-of-00003.safetensors",
+      "model-00002-of-00003.safetensors",
+      "model-00003-of-00003.safetensors",
     ]
   # this is the only place where you should update `recipe_checkpoint` if resuming training
   recipe_checkpoint: null
@@ -119,13 +119,13 @@ device: cuda
 
 # Training arguments
 batch_size: 64
-num_steps: 10000
+num_steps: 20000
 ppo_epochs: 2
 ppo_batch_size: 32
 gradient_accumulation_steps: 1  # Use to increase effective batch size
 
 # Memory management and performance
-compile: True  # torch.compile the model + loss, True increases speed + decreases memory
+compile: False # torch.compile the model + loss, True increases speed + decreases memory
 optimizer:
   _component_: bitsandbytes.optim.PagedAdamW
   lr: 1e-4
@@ -169,13 +169,12 @@ loss:
 kl_coeff: 0.01
 
 # Logging
-metric_logger:
-  _component_: torchtune.training.metric_logging.WandBLogger
-  log_dir: ${prefix}
+wandb_logger:
+  dir: ${prefix}
   entity: RADFAN
-  project: PPO
-  group: null 
-  name: Mistral-7B-QLoRA
+  project: FedPPO
+  group: Base-MeanReference-0.8
+  name: Mistral-7B-Base-LoRA-MeanRef-0.8-U13
 
 log_every_n_steps: 1
-update_ref_policy_every_n_steps: 1
+update_ref_policy_every_n_steps: 13

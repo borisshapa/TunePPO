@@ -4,12 +4,14 @@
 import math
 import os
 import sys
+import wandb
 from functools import partial
 from itertools import chain
 from typing import Any, Dict, List, Optional, Tuple, Iterable, Iterator
 from warnings import warn
 
 import torch
+import torch.distributed as dist
 from omegaconf import DictConfig, ListConfig
 from torch import nn
 from torch.optim import Optimizer
@@ -18,6 +20,7 @@ from torchao.dtypes import NF4Tensor
 from torchtune import config, generation, modules, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.datasets import ConcatDataset
+from torchtune.modules import TransformerDecoder
 from torchtune.modules.peft import (
     disable_adapter,
     get_adapter_params,
@@ -31,8 +34,11 @@ from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.rlhf import PPOStats, Trajectory
 from torchtune.training.checkpointing import Checkpointer
-from torchtune.training.metric_logging import MetricLoggerInterface
+from torchtune.training.metric_logging import WandBLogger
+from torchtune.utils import log_rank_zero
 from tqdm import tqdm
+
+from ppotune.utils import DistributedPolicyMixture, MeanReduce
 
 log = utils.get_logger("DEBUG")
 
@@ -112,66 +118,73 @@ def clear_lora_adapter(model: nn.Module) -> nn.Module:
 
     return model
 
-class PPOQLoRARecipe(FTRecipeInterface):
+class FedPPORecipe(FTRecipeInterface):
     """
-    Full finetuning recipe for RLHF with PPO for dense transformer-based LLMs such as LLama2. This recipe is optimized
-    for single GPU training. Training on CPU is not supported.
+    Full finetuning recipe for collaborative RLHF with PPO for dense transformer-based LLMs such as
+    LLama2. This recipe is optimized for single GPU training per agent.
 
-    This implementation is based on `Learning to summarize from human feedback <https://arxiv.org/abs/2009.01325`_ and
-    `Training a Helpful and Harmless Assistant with Reinforcement Learning from Human Feedback <https://arxiv.org/abs/2204.05862`_.
+    This implementation is based on `Learning to summarize from human feedback
+    <https://arxiv.org/abs/2009.01325`_ and `Training a Helpful and Harmless Assistant with
+    Reinforcement Learning from Human Feedback <https://arxiv.org/abs/2204.05862`_.
 
     Features:
         - Activation Checkpointing. This can be controlled using the ``activation_checkpointing``
-            flag. Activation checkpointing helps reduce the memory footprint since we no longer keep
-            activations in memory and instead recompute them during the backward pass. This is especially
-            helpful for larger batch sizes when you're memory constrained. But these savings in memory
-            come at the cost of training performance. In most cases training can slow-down quite a bit as
-            a result of this activation recomputation.
+            flag. Activation checkpointing helps reduce the memory footprint since we no longer
+            keep activations in memory and instead recompute them during the backward pass. This is
+            especially helpful for larger batch sizes when you're memory constrained. But these
+            savings in memory come at the cost of training performance. In most cases training can
+            slow-down quite a bit as a result of this activation recomputation.
 
-        - Precision. Full fp32 and bf16 training are supported. Precision is controlled using the ``dtype``
-            flag. When ``dtype=bf16``, all activations, gradients and optimizer states are in bfloat16. In
-            most cases this should halve the memory footprint of full precision (fp32) training, without
-            loss in model quality (will depend on the model, training data and other settings). For
-            GPUs which do not support bfloat16, we fall back to fp32. Mixed precision training and fp16
-            precision are currently not supported.
+        - Precision. Full fp32 and bf16 training are supported. Precision is controlled using the
+            ``dtype`` flag. When ``dtype=bf16``, all activations, gradients and optimizer states
+            are in bfloat16. In most cases this should halve the memory footprint of full precision
+            (fp32) training, without loss in model quality (will depend on the model, training data
+            and other settings). For GPUs which do not support bfloat16, we fall back to fp32.
+            Mixed precision training and fp16 precision are currently not supported.
 
-        - Adjusting batch sizes when memory constrained. This recipe uses three different batch sizes:
-            - ``batch_size`` controls the total number of samples which are sampled from the dataset for a single trajectory.
-            - ``forward_batch_size`` controls the mini-batch size for trajectory generation. Since gradients are disabled
-                during trajectory generation, memory consumption is lower and this can be higher than ``ppo_batch_size``.
-            - ``ppo_batch_size`` controls the number of samples used for a single optimization step during PPO optimization.
-                Since we're optimizing two models at once, adjusting this parameter can have a big impact during training.
+        - Adjustable batch sizes. This recipe uses three different batch sizes:
+            - ``batch_size`` controls the total number of samples which are sampled from the
+                dataset for a single trajectory.
+            - ``forward_batch_size`` controls the mini-batch size for trajectory generation. Since
+                gradients are disabled during trajectory generation, memory consumption is lower
+                and this can be higher than ``ppo_batch_size``.
+            - ``ppo_batch_size`` controls the number of samples used for a single optimization step
+                during PPO optimization. Since we're optimizing two models at once, adjusting this
+                parameter can have a big impact during training.
 
-        - Gradient Accumulation. You can simulate larger ``ppo_batch_size`` sizes by accumulating gradients. This is
-            controlled using the ``gradient_accumulation_steps`` flag.
+        - Gradient Accumulation. You can simulate larger ``ppo_batch_size`` sizes by accumulating
+            gradients. This is controlled using the ``gradient_accumulation_steps`` flag.
 
-            For example: with ``ppo_batch_size``=32 and ``gradient_accumulation_steps``=16, each backward pass during
-            PPO optimization uses a 'micro batch size' of 2.
+            For example: with ``ppo_batch_size``=32 and ``gradient_accumulation_steps``=16, each
+            backward pass during PPO optimization uses a 'micro batch size' of 2.
 
-            Gradient accumulation is especially useful when you are memory constrained. In this case,
-            accumulating gradients might give you better training speed than enabling activation
-            checkpointing.
+            Gradient accumulation is especially useful when you are memory constrained. In this
+            case, accumulating gradients might give you better training speed than enabling
+            activation checkpointing.
 
-        - Optimizer in Backward. Fusing the optimizer step into the backward pass helps reduce the memory
-            footprint associated with gradients. This can be especially helpful when you are memory
-            constrained. Note that users can only use ONE of gradient accumulation or optimizer in backward.
-            These features currently do not work together. For more details on optimizer in backward, please
-            see this tutorial: https://pytorch.org/tutorials/intermediate/optimizer_step_in_backward_tutorial.html
+        - Optimizer in Backward. Fusing the optimizer step into the backward pass helps reduce the
+            memory footprint associated with gradients. This can be especially helpful when you are
+            memory constrained. Note that users can only use ONE of gradient accumulation or
+            optimizer in backward. These features currently do not work together. For more details
+            on optimizer in backward, please see this tutorial:
+            https://pytorch.org/tutorials/intermediate/optimizer_step_in_backward_tutorial.html
 
-            This paramater can provide significant performance gains, since there the number of optimization steps
-            scales with ``ppo_epochs`` and ``batch_size``. Depending on the maximum sequence length sampled from the dataset,
-            we've found that setting ``ppo_batch_size`` to the highest you can fit in memory, and `optimizer_in_bwd=True` to
+            This paramater can provide significant performance gains, since there the number of
+            optimization steps scales with ``ppo_epochs`` and ``batch_size``. Depending on the
+            maximum sequence length sampled from the dataset, we've found that setting
+            ``ppo_batch_size`` to the highest you can fit in memory, and `optimizer_in_bwd=True` to
             provide significant memory savings.
 
-        - Lower precision optimizers. This recipe supports lower-precision optimizers from the bitsandbytes
-            library (https://huggingface.co/docs/bitsandbytes/main/en/index). We've tested the recipe with
-            8-bit AdamW and Paged AdamW. These optimizers are especially helpful when you are memory constrained
-            since they help reduce the memory footprint associated with the optimizer states.
+        - Lower precision optimizers. This recipe supports lower-precision optimizers from the
+            bitsandbytes library (https://huggingface.co/docs/bitsandbytes/main/en/index). We've
+            tested the recipe with 8-bit AdamW and Paged AdamW. These optimizers are especially
+            helpful when you are memory constrained since they help reduce the memory footprint
+            associated with the optimizer states.
 
-        - Checkpointing. Model weights are checkpointed only at the end of training. Resuming training is unsupported.
-
-            For more details on the checkpointer, please take a look at
-            our checkpointer deepdive (https://pytorch.org/torchtune/main/deep_dives/checkpointer.html).
+        - Checkpointing. Model weights are checkpointed only at the end of training. Resuming
+            training is unsupported. For more details on the checkpointer, please take a look at
+            our checkpointer deepdive:
+            https://pytorch.org/torchtune/main/deep_dives/checkpointer.html.
 
         - Logging. Terminal, Disk, WandB and TensorBoard are all supported.
 
@@ -186,7 +199,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
         """
         Initialize basic things.
         """
-        # set dtype
+        # set device
         self._device = utils.get_device(device=cfg.device)
         if self._device.type != "cuda":
             raise RuntimeError("CUDA support. Only.")
@@ -226,11 +239,10 @@ class PPOQLoRARecipe(FTRecipeInterface):
         """
         Sets up the recipe state correctly.
         """
-        # set metric logger
-        self._metric_logger: MetricLoggerInterface = config.instantiate(cfg.metric_logger)
-
+        self._metric_logger = self._setup_wandb_logger(cfg.wandb_logger)
         # log the final config with parameter override
-        self._metric_logger.log_config(cfg)
+        if dist.get_rank() == 0:
+            self._metric_logger.log_config(cfg)
 
         # setup checkpointers
         self._checkpointer: Checkpointer = config.instantiate(
@@ -255,6 +267,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
             compile_model       = cfg.compile,
             enable_activation_checkpointing = cfg.enable_activation_checkpointing,
         )
+        self._ref_policy = DistributedPolicyMixture(self._policy, MeanReduce(0.8))
 
         # setup tokenizer
         self._tokenizer = self._setup_tokenizer(cfg)
@@ -280,6 +293,27 @@ class PPOQLoRARecipe(FTRecipeInterface):
         # set other parameters
         self._setup_batch_sizes(cfg)
         self._setup_hyperparameters(cfg)
+
+    def _setup_wandb_logger(
+        self,
+        cfg_logger: DictConfig
+    ) -> WandBLogger:
+        """
+        Sets up metric logger for each process.
+        """
+        # set distinct run names for each agent
+        if name := cfg_logger.get("name"):
+            name = f"{name}-{dist.get_rank()}/{dist.get_world_size() - 1}"
+
+        # initialize wandb in advance to have it for each agent
+        wandb.init(
+            dir=cfg_logger.dir,
+            entity=cfg_logger.entity,
+            project=cfg_logger.project,
+            group=cfg_logger.group,
+            name=name,
+        )
+        return WandBLogger(**cfg_logger)
 
     def _setup_tokenizer(self, cfg: DictConfig) -> ModelTokenizer:
         """
@@ -376,7 +410,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
                 "Please set gradient_accumulation_steps=1, or optimizer_in_bwd=False."
             )
 
-        self._total_steps = cfg.num_steps // self.batch_size
+        self._total_steps = cfg.num_steps // (self.batch_size * dist.get_world_size())
         batches_per_epoch = max(
             1, len(self._dataloader)
         )  # when we only have a single batch in the dataset
@@ -388,9 +422,9 @@ class PPOQLoRARecipe(FTRecipeInterface):
             )
         if self._total_steps < len(self._dataloader):
             warn(
-                f"There are fewer total steps ({self._total_steps}, (num_steps//batch_size) "
-                f"than there are batches ({len(self._dataloader)}) in the dataset. "
-                f"Training will stop after ({self._total_steps}) steps without saving intermediate checkpoints"
+                f"There are fewer total steps ({self._total_steps}, (num_steps//batch_size) than"
+                f"there are batches ({len(self._dataloader)}) in the dataset. Training will stop"
+                f"after ({self._total_steps}) steps without saving intermediate checkpoints."
             )
         if (self._total_steps > batches_per_epoch) and (
             self._total_steps % batches_per_epoch != 0
@@ -400,8 +434,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
                 f"the number of batches in the dataset ({batches_per_epoch}). "
                 f"Intermediate checkpoints will only be saved every {batches_per_epoch} steps."
             )
-        log.info(
-            f"Total steps to run: {self._total_steps}, Total epochs to run: {self._total_epochs}"
+        log_rank_zero(
+            log, f"Total steps to run: {self._total_steps}, Total epochs: {self._total_epochs}"
         )
 
     def _setup_models(
@@ -412,7 +446,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
         valmod_state_dict: Dict[str, Any],
         compile_model: bool,
         enable_activation_checkpointing: bool,
-    ) -> Tuple[nn.Module, nn.Module, nn.Module]:
+        ) -> Tuple[TransformerDecoder, TransformerDecoder]:
         """
         Sets up the policy/reference model and reward/value model.
         """
@@ -453,19 +487,21 @@ class PPOQLoRARecipe(FTRecipeInterface):
         training.validate_expected_param_dtype(
             valmod.named_parameters(), dtype=self._dtype
         )
-        log.info(f"Models are initialized with {self._dtype} precision.")
+        log_rank_zero(
+            log, f"Models are initialized with {self._dtype} precision."
+        )
 
         # Compile model, if enabled.
         if compile_model:
             backend = os.environ.get("TORCH_COMPILE_BACKEND", "inductor")
-            log.info(
-                "NOTE: torch.compile is enabled and model would be compiled in first forward."
+            log_rank_zero(
+                log, "NOTE: torch.compile is enabled and model would be compiled in first forward."
                 "Expect a relatively slow first iteration."
             )
             policy.compile(backend=backend)
             valmod.compile(backend=backend)
 
-        if self._device.type == "cuda":
+        if dist.get_rank() == 0:
             memory_stats = training.get_memory_stats(device=self._device)
             training.log_memory_stats(memory_stats)
 
@@ -479,7 +515,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
             cfg_optimizer,
             chain(self._policy.parameters(), self._valmod.parameters()),
         )
-        log.info("Optimizer is set up.")
+        log_rank_zero(log, "Optimizer is set up.")
         return optimizer
 
     def _setup_in_bwd_optimizer(self, cfg_optimizer: DictConfig) -> None:
@@ -500,7 +536,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
         training.register_optim_in_bwd_hooks(
             model=self._valmod, optim_dict=optim_dict
         )
-        log.info("In-backward optimizers are set up.")
+        log_rank_zero(log, "In-backward optimizers are set up.")
 
     def _setup_data(
         self,
@@ -522,11 +558,9 @@ class PPOQLoRARecipe(FTRecipeInterface):
             ds = config.instantiate(cfg_dataset, tokenizer=tokenizer)
 
         sampler = DistributedSampler(
-            ds,
-            num_replicas=1,
-            rank=0,
+            dataset=ds,
             shuffle=shuffle,
-            seed=0,
+            drop_last=True
         )
         dataloader = DataLoader(
             dataset=ds,
@@ -566,15 +600,15 @@ class PPOQLoRARecipe(FTRecipeInterface):
 
     def generate_trajectory(self, input_ids: torch.Tensor) -> Trajectory:
         """
-        Generates a trajectory given the current policy and value models, the reference policy model, the reward model,
-        and batch of inputs. This is done over the following steps:
+        Generates a trajectory given the current policy and value models, the reference policy
+        model, the reward model, and batch of inputs. This is done over the following steps:
 
         1: Generate responses, and logits corresponding to the responses using the current policy,
             generating (query, response) pairs.
         2. Estimate logprobs of the generated responses using the current policy.
         3. Estimate values from the generated responses using the current value function.
-        4. Replace any tokens in the response after the first stop token (usually EOS token) with padding,
-            producting truncated responses.
+        4. Replace any tokens in the response after the first stop token (usually EOS token) with
+           padding, producting truncated responses.
         5. Run the reward model on the (query, truncated-response) pairs.
         6. Mask out all the invalid values in the trajectory due to padding tokens.
 
@@ -587,7 +621,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
         """
         batch_size, context_length = input_ids.shape
 
-        # step 1: generate responses, and logits corresponding to the responses using the current policy
+        # step 1: generate responses, and logits corresponding to the responses using the policy
         query_responses, logits = generation.generate(
             model=self._policy,
             prompt=input_ids,
@@ -601,7 +635,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
         responses = query_responses[:, context_length:].clone()
         query_response_padding_masks = query_responses != self._tokenizer.pad_id
 
-        # step 1.1 create attention masks and position IDs for any padding tokens in inputs, used for future forward passes
+        # step 1.1 create attention masks and position IDs for any padding tokens in inputs,
+        # used for future forward passes
         masks = generation.get_causal_mask_from_padding_mask(
             query_response_padding_masks
         )
@@ -619,7 +654,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
 
         # step 2.1 estimate logprobs of the responses using the reference policy
         with torch.no_grad(), disable_adapter(self._policy):
-            ref_logits = self._policy(
+            ref_logits = self._ref_policy(
                 query_responses, input_pos=position_ids, mask=masks
             )
         ref_logits = rlhf.truncate_sequence_for_logprobs(ref_logits, context_length)
@@ -631,8 +666,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
         values = self._valmod(query_responses, input_pos=position_ids, mask=masks)
         values = rlhf.truncate_sequence_for_logprobs(values, context_length).squeeze(-1)
 
-        # step 4. replace any tokens in the responses after the first stop token (usually EOS token) with padding
-        # resulting in truncated responses
+        # step 4. replace any tokens in the responses after the first stop token (usually EOS
+        # token) with padding resulting in truncated responses
         response_padding_masks, responses = rlhf.truncate_sequence_at_first_stop_token(
             responses, self._stop_token_ids, self._tokenizer.pad_id
         )
@@ -647,8 +682,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
 
         del responses
 
-        # step 5.1 the scores from the reward model are the logits for the last non-padding token in
-        # each (query, truncated-response) pair
+        # step 5.1 the scores from the reward model are the logits for the last non-padding token
+        # in each (query, truncated-response) pair
         seq_lens = training.get_unmasked_sequence_lengths(response_padding_masks)
         scores = scores[torch.arange(batch_size), seq_lens + context_length].squeeze(-1)
 
@@ -697,8 +732,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
 
     def generate_trajectory_batched(self, input_ids: torch.Tensor) -> Trajectory:
         """
-        Generates a ``self.batch_size`` batch of trajectories using `self._forward_batch_size` batch sizes.
-        See ``generate_trajectory`` for more details.
+        Generates a ``self.batch_size`` batch of trajectories using `self._forward_batch_size`
+        batch sizes. See ``generate_trajectory`` for more details.
 
         Args:
             input_ids (torch.Tensor): tensor of input token IDs with shape [b, seq_length]
@@ -727,9 +762,9 @@ class PPOQLoRARecipe(FTRecipeInterface):
         training_completed = False
         pbar = tqdm(total=self._total_steps, initial=self._steps_run)
         for curr_epoch in range(self._epochs_run, self._total_epochs):
-            # Update the sampler to ensure data is correctly shuffled across epochs
-            # in case shuffle is True
-            self._sampler.set_epoch(curr_epoch)
+            # Ensure data is not reshuffled at new epoch so the agents are
+            # trained on non-overlapping data.
+            self._sampler.set_epoch(0)
 
             for _, batch in enumerate(self._dataloader):
                 batch = batch["tokens"].to(self._device)
@@ -835,7 +870,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
             self._epochs_run += 1
 
             if training_completed:
-                self.save_checkpoint(curr_epoch)
+                if dist.get_rank() == 0:
+                    self.save_checkpoint(curr_epoch)
                 return
 
     def _ppo_step(
@@ -846,7 +882,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
         context_length: int,
     ) -> PPOStats:
         """
-        Perform a single PPO optimisation step over a batch of trajectories and corresponding advantages and returns.
+        Perform a single PPO optimisation step over a batch of trajectories and corresponding
+        advantages and returns.
 
         Args:
             trajectory (Trajectory): a batch of trajectories
@@ -861,7 +898,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
                - value_loss (torch.Tensor): The value function loss.
                - ratios (torch.Tensor): The ratio between the current and old policy probabilities.
                - clipfrac (torch.Tensor): The fraction of ratios that were clipped.
-               - approx_policy_kls: Average estimated KL divergence between the policy before and after the optimisation step.
+               - approx_policy_kls: Average estimated KL divergence between the policy before and
+                 after the optimisation step.
 
         """
         # estimate logprobs from the policy at the current optimisation step
@@ -970,7 +1008,8 @@ class PPOQLoRARecipe(FTRecipeInterface):
         """
         Cleanup tensors after each PPO step to free up memory.
         """
-        # there shouldn't be any floating references to the individual tensors at the this point, so gc can do its thing
+        # there shouldn't be any floating references to the individual tensors at the this point,
+        # so gc can do its thing
         for v in trajectory:
             del v
         del trajectory
@@ -984,6 +1023,7 @@ class PPOQLoRARecipe(FTRecipeInterface):
 
     def cleanup(self, **kwargs) -> None:
         self._metric_logger.close()
+        dist.destroy_process_group()
 
 
 @config.parse
@@ -995,8 +1035,9 @@ def recipe_main(cfg: DictConfig) -> None:
         - Parameters specified in config (see available configs through ``tune ls``)
         - Overwritten by arguments from the command-line
     """
-    config.log_config(recipe_name="PPOQLoRARecipe", cfg=cfg)
-    recipe = PPOQLoRARecipe(cfg=cfg)
+    dist.init_process_group()
+    config.log_config(recipe_name="FedPPORecipe", cfg=cfg)
+    recipe = FedPPORecipe(cfg=cfg)
     recipe.setup(cfg=cfg)
     recipe.train()
     recipe.cleanup()
