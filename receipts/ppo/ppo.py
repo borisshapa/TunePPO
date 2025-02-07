@@ -211,7 +211,7 @@ class FedPPORecipe(FTRecipeInterface):
 
         # instantiate loss
         self._loss_fn = config.instantiate(cfg.loss)
-        self._kl_penalty = KLPenalty(cfg.kl.coeff)
+        self._kl_penalty = KLPenalty(cfg.kl.direct_coeff)
 
         # setup sampler and dataloader
         self._sampler, self._dataloader = self._setup_data(
@@ -278,7 +278,7 @@ class FedPPORecipe(FTRecipeInterface):
         generation hyperparameters, reward masking hyperparameters, and stop token ids.
         """
         # KL-penalty coefficient
-        self._kl_coeff = cfg.kl.coeff
+        self._kl_coeff = cfg.kl.reward_coeff
 
         # GAE hyperparameters
         self._gamma = cfg.gamma
