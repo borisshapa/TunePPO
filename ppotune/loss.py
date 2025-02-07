@@ -9,6 +9,7 @@ class KLPenalty(nn.Module):
     according to [Schulman et al. 2020](http://joschu.net/blog/kl-approx.html)
     """
     def __init__(self, coeff: float) -> None:
+        super().__init__()
         self._coeff = coeff
 
     def forward(
