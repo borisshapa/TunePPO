@@ -29,8 +29,8 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-prefix: /home/arqa39/.torchtune
-output_dir: ${prefix}/checkpoints/Mistral-7B-Instruct-LoRA-MeanRef-0.8-U13
+prefix: /home/jovyan/ignashin/Sandbox/rlhf-and-friends/.torchtune
+output_dir: ${prefix}/checkpoints/Mistral-7B-Instruct-LoRA-SelfAttraction-0.8
 
 
 # Tokenizer
@@ -120,7 +120,7 @@ device: cuda
 
 # Training arguments
 batch_size: 64
-num_steps: 10000
+num_steps: 40000
 ppo_epochs: 2
 ppo_batch_size: 32
 gradient_accumulation_steps: 1  # Use to increase effective batch size
@@ -167,15 +167,21 @@ loss:
   epsilon: 0.2
   value_coeff: 0.1
   value_clip_range: 0.2
-kl_coeff: 0.01
+
+# KL-Penalty parameters
+kl:
+  coeff: 0.01
+  # Regulates probability mass given to self-reference acc. to formula
+  # ref = self_attraction * self_ref + (1 - self_attraction) * others_ref.mean()
+  self_attraction: 0.8
 
 # Logging
 wandb_logger:
   dir: ${prefix}
   entity: RADFAN
   project: FedPPO
-  group: Instruct-MeanReference-0.8
-  name: Mistral-7B-Base-LoRA-MeanRef-0.8-U13
+  group: Instruct-SelfAttraction-0.8
+  name: Mistral-7B-Base-LoRA
 
 log_every_n_steps: 1
 update_ref_policy_every_n_steps: 13
