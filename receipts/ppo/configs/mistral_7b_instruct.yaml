@@ -29,7 +29,7 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-prefix: /home/arqa39/.torchtune
+prefix: /home/jovyan/ignashin/Sandbox/rlhf-and-friends/.torchtune
 output_dir: ${prefix}/checkpoints/Mistral-7B-Instruct-LoRA-SelfAttraction-0.8
 
 
@@ -120,7 +120,7 @@ device: cuda
 
 # Training arguments
 batch_size: 64
-num_steps: 10000
+num_steps: 40000
 ppo_epochs: 2
 ppo_batch_size: 32
 gradient_accumulation_steps: 1  # Use to increase effective batch size
