@@ -27,13 +27,15 @@ from torchtune.modules.peft import (
 )
 from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
-from torchtune.rlhf import PPOStats, Trajectory
+from torchtune.rlhf import Trajectory
 from torchtune.training.checkpointing import Checkpointer
 from torchtune.training.metric_logging import WandBLogger
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
+from ppotune.datatypes import PenalizedPPOStats
 from ppotune.dist import DistributedPolicyMixture
+from ppotune.loss import KLPenalty
 from ppotune.peft import (
     get_adapter_config,
     get_merged_adapter_state_dict,
@@ -209,6 +211,7 @@ class FedPPORecipe(FTRecipeInterface):
 
         # instantiate loss
         self._loss_fn = config.instantiate(cfg.loss)
+        self._kl_penalty = KLPenalty(cfg.kl.coeff)
 
         # setup sampler and dataloader
         self._sampler, self._dataloader = self._setup_data(
@@ -724,13 +727,13 @@ class FedPPORecipe(FTRecipeInterface):
                 )
 
                 # step 4. optimise using the PPO objective over multiple epochs
-                ppo_stats: List[PPOStats] = []
+                ppo_stats: List[PenalizedPPOStats] = []
                 for _ in range(self._ppo_epochs):
                     batch_idxs = torch.randperm(self.batch_size, device=self._device)
                     for i in range(0, self.batch_size, self._ppo_batch_size):
                         mini_batch_idxs = batch_idxs[i : i + self._ppo_batch_size]
 
-                        batch_ppo_stats: List[PPOStats] = []
+                        batch_ppo_stats: List[PenalizedPPOStats] = []
                         for j in range(
                             0, self._ppo_batch_size, self._ppo_backward_batch_size
                         ):
@@ -758,7 +761,7 @@ class FedPPORecipe(FTRecipeInterface):
                             )
                             del batch_trajectory
 
-                        ppo_stats.append(PPOStats(*map(sum, zip(*batch_ppo_stats))))
+                        ppo_stats.append(PenalizedPPOStats(*map(sum, zip(*batch_ppo_stats))))
 
                         grad_logs = {
                             **self._collect_grad_norm("policy", self._policy),
@@ -776,7 +779,7 @@ class FedPPORecipe(FTRecipeInterface):
                 if self._steps_run % self._log_every_n_steps == 0:
                     self.log_metrics(
                         trajectory,
-                        PPOStats(*map(torch.stack, zip(*ppo_stats))),
+                        PenalizedPPOStats(*map(torch.stack, zip(*ppo_stats))),
                         kl,
                         kl_rewards,
                         **grad_logs
@@ -807,7 +810,7 @@ class FedPPORecipe(FTRecipeInterface):
         advantages: torch.Tensor,
         returns: torch.Tensor,
         context_length: int,
-    ) -> PPOStats:
+    ) -> PenalizedPPOStats:
         """
         Perform a single PPO optimisation step over a batch of trajectories and corresponding
         advantages and returns.
@@ -819,7 +822,8 @@ class FedPPORecipe(FTRecipeInterface):
             context_length (int): input ids sequence length
 
         Returns:
-            PPOStats: An instance of :class:`~torchtune.rlhf.PPOStats`, a NamedTuple containing:
+            PenalizedPPOStats: An instance of :class:`ppotune.datatypes.PenalizedPPOStats`,
+            a NamedTuple containing:
                - loss (torch.Tensor): The total PPO loss.
                - policy_loss (torch.Tensor): The policy function loss.
                - value_loss (torch.Tensor): The value function loss.
@@ -827,6 +831,7 @@ class FedPPORecipe(FTRecipeInterface):
                - clipfrac (torch.Tensor): The fraction of ratios that were clipped.
                - approx_policy_kls: Average estimated KL divergence between the policy before and
                  after the optimisation step.
+               - kl_penalty (torch.Tensor): KL-Penalty
 
         """
         # estimate logprobs from the policy at the current optimisation step
@@ -866,22 +871,28 @@ class FedPPORecipe(FTRecipeInterface):
             padding_masks=~trajectory.response_padding_masks,
             value_padding_masks=~trajectory.value_padding_masks,
         )
-
-        loss /= self._gradient_accumulation_steps
-        loss.backward()
+        # calculate DeepSeek style penalty i.e. coeff * KL[policy||reference]
+        kl_penalty = self._kl_penalty(
+            pi_logprobs,
+            trajectory.ref_logprobs,
+        )
+        penalized_loss = loss + kl_penalty
+        penalized_loss /= self._gradient_accumulation_steps
+        penalized_loss.backward()
 
         with torch.no_grad():
             approx_policy_kls = (
                 0.5 * (pi_logprobs - trajectory.logprobs).pow(2)
             ).mean()
 
-        return PPOStats(
-            loss,
+        return PenalizedPPOStats(
+            loss / self._gradient_accumulation_steps,
             policy_loss / self._gradient_accumulation_steps,
             value_loss / self._gradient_accumulation_steps,
             ratios / self._gradient_accumulation_steps,
             clipfrac / self._gradient_accumulation_steps,
             approx_policy_kls / self._gradient_accumulation_steps,
+            kl_penalty / self._gradient_accumulation_steps,
         )
 
     def _collect_grad_norm(self, name: str, module: nn.Module) -> dict[str, torch.Tensor]:
@@ -895,7 +906,7 @@ class FedPPORecipe(FTRecipeInterface):
     def log_metrics(
         self,
         trajectory: Trajectory,
-        ppo_stats: PPOStats,
+        ppo_stats: PenalizedPPOStats,
         kl: torch.Tensor,
         kl_rewards: torch.Tensor,
         **kwargs
@@ -909,6 +920,7 @@ class FedPPORecipe(FTRecipeInterface):
             "rlhf_reward": trajectory.scores.mean() + kl_rewards.sum(1).mean(),
             "kl": kl.sum(1).mean(),
             "kl_reward": kl_rewards.sum(1).mean(),
+            "kl_penalty": ppo_stats.kl_penalty.mean(),
             "loss": ppo_stats.loss.mean(),
             "policy_loss": ppo_stats.policy_loss.mean(),
             "value_loss": ppo_stats.value_loss.mean(),
@@ -926,7 +938,7 @@ class FedPPORecipe(FTRecipeInterface):
     def cleanup_after_step(
         self,
         trajectory: Trajectory,
-        ppo_stats: PPOStats,
+        ppo_stats: PenalizedPPOStats,
         advantages: torch.Tensor,
         returns: torch.Tensor,
         kl: torch.Tensor,
