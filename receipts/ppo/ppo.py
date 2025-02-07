@@ -875,6 +875,7 @@ class FedPPORecipe(FTRecipeInterface):
         kl_penalty = self._kl_penalty(
             pi_logprobs,
             trajectory.ref_logprobs,
+            padding_masks=~trajectory.response_padding_masks,
         )
         penalized_loss = loss + kl_penalty
         penalized_loss /= self._gradient_accumulation_steps
