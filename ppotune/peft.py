@@ -4,7 +4,7 @@ import torch.nn as nn
 
 from omegaconf import DictConfig
 from torchao.dtypes import NF4Tensor
-from torchtune.modules import LoRALinear
+from torchtune.modules.peft import LoRALinear
 from torchtune.modules.peft import get_lora_module_names, get_merged_lora_ckpt
 from torchtune.modules.peft.lora import to_nf4
 from torchtune.training import MODEL_KEY
