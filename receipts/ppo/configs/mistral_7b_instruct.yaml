@@ -30,7 +30,7 @@
 
 # Change those to your preference. Do not do that via CLI!
 prefix: /home/jovyan/ignashin/Sandbox/rlhf-and-friends/.torchtune
-output_dir: ${prefix}/checkpoints/Mistral-7B-Instruct-LoRA-SelfAttraction-0.8
+output_dir: ${prefix}/checkpoints/Mistral-7B-Instruct-LoRA-DirectKL-SelfAttraction-0.8
 
 
 # Tokenizer
@@ -183,7 +183,7 @@ wandb_logger:
   dir: ${prefix}
   entity: RADFAN
   project: FedPPO
-  group: Instruct-SelfAttraction-0.8
+  group: Instruct-DirectKL-SelfAttraction-0.8
   name: Mistral-7B-Base-LoRA
 
 log_every_n_steps: 1
