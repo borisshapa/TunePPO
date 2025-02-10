@@ -3,10 +3,14 @@
 # This config uses hyperparameters based on small set of experiments and information
 # available from existing implementations.
 #
-# This config assumes that you've run the following command before launching
+# This config assumes that you've run the following commands before launching
 # this run: (take a look what prefix is down the config)
+# 1. Download the reward model
 #   tune download weqweasdas/RM-Mistral-7B --output-dir ${prefix}/models/RM-Mistral-7B/
-#   tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-v0.2/
+# 2a. Get base Mistral-7B model
+#   tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-Base/
+# 2b. Or get-7B instruct model
+#   tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct/
 #
 # You'll also need to ensure that {output_dir} exists beforehand, as checkpoints for policy and
 # value models as well as WandBLogger logs are saved in sub-folders.
@@ -29,8 +33,9 @@
 
 
 # Change those to your preference. Do not do that via CLI!
+model: Mistral-7B-Base # or Mistral-7B-Instruct
 prefix: /home/jovyan/ignashin/Sandbox/rlhf-and-friends/.torchtune
-output_dir: ${prefix}/checkpoints/Mistral-7B-Base-LoRA-DirectKL-SelfAttraction-0.8
+output_dir: ${prefix}/checkpoints/${model}-LoRA-DirectKL-SelfAttraction-0.8
 
 
 # Tokenizer
@@ -87,7 +92,7 @@ valmod:
 # main checkpointer is for the policy model
 checkpointer:
   _component_: torchtune.training.FullModelHFCheckpointer
-  checkpoint_dir: ${prefix}/models/Mistral-7B-v0.2/
+  checkpoint_dir: ${prefix}/models/${model}/
   checkpoint_files:
     [
       "model-00001-of-00003.safetensors",
@@ -183,8 +188,8 @@ wandb_logger:
   dir: ${prefix}
   entity: RADFAN
   project: FedPPO
-  group: Base-DirectKL-SelfAttraction-0.8
-  name: Mistral-7B-Base-LoRA
+  group: DirectKL-SelfAttraction-0.8
+  name: ${model}-LoRA
 
 log_every_n_steps: 1
 update_ref_policy_every_n_steps: 13
