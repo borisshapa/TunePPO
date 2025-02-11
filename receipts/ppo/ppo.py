@@ -1,10 +1,12 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+import contextlib
 import math
 import os
 import sys
 import wandb
+
 from functools import partial
 from itertools import chain
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,6 +14,7 @@ from warnings import warn
 
 import torch
 import torch.distributed as dist
+
 from omegaconf import DictConfig, ListConfig
 from torch import nn
 from torch.optim import Optimizer
@@ -19,7 +22,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 from torchtune import config, generation, modules, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.datasets import ConcatDataset
-from torchtune.modules import TransformerDecoder
+from torchtune.modules import TransformerDecoder, local_kv_cache
 from torchtune.modules.peft import (
     disable_adapter,
     get_adapter_params,
@@ -223,6 +226,20 @@ class FedPPORecipe(FTRecipeInterface):
         # set other parameters
         self._setup_batch_sizes(cfg)
         self._setup_hyperparameters(cfg)
+
+        # setup a KV-caching context manager for trajectory generation
+        self.cache_ctx_manager = (
+            lambda: local_kv_cache(
+                self._policy,
+                batch_size=self._forward_batch_size,
+                dtype=self._dtype,
+                decoder_max_seq_len=self._tokenizer.max_seq_len
+                + self._max_generated_tokens,
+                device=self._device,
+            )
+            if cfg.enable_kv_cache
+            else lambda: contextlib.nullcontext()
+        )
 
     def _setup_wandb_logger(
         self,
@@ -549,19 +566,18 @@ class FedPPORecipe(FTRecipeInterface):
             Trajectory: An instance of :class:`~torchtune.rlhf.Trajectory` comprising
                 the current trajectory.
         """
-        batch_size, context_length = input_ids.shape
-
         # step 1: generate responses, and logits corresponding to the responses using the policy
-        query_responses, logits = generation.generate(
-            model=self._policy,
-            prompt=input_ids,
-            max_generated_tokens=self._max_generated_tokens,
-            temperature=self._temperature,
-            top_k=self._top_k,
-            pad_id=self._tokenizer.pad_id,
-            rng=self._rng,
-        )
-
+        with self.cache_ctx_manager():
+            query_responses, logits = generation.generate(
+                model=self._policy,
+                prompt=input_ids,
+                max_generated_tokens=self._max_generated_tokens,
+                temperature=self._temperature,
+                top_k=self._top_k,
+                pad_id=self._tokenizer.pad_id,
+                rng=self._rng,
+            )
+        _, context_length = input_ids.shape
         responses = query_responses[:, context_length:].clone()
         query_response_padding_masks = query_responses != self._tokenizer.pad_id
 
@@ -577,7 +593,6 @@ class FedPPORecipe(FTRecipeInterface):
         del query_response_padding_masks
 
         # step 2. estimate logprobs of the responses using the current policy
-        logits = logits[:, context_length - 1 :]
         logprobs = rlhf.logits_to_logprobs(logits, responses, self._temperature)
 
         del logits
@@ -615,8 +630,9 @@ class FedPPORecipe(FTRecipeInterface):
         # step 5.1 the scores from the reward model are the logits for the last non-padding token
         # in each (query, truncated-response) pair
         seq_lens = training.get_unmasked_sequence_lengths(response_padding_masks)
-        scores = scores[torch.arange(batch_size), seq_lens + context_length].squeeze(-1)
-
+        scores = scores.gather(1, (seq_lens + context_length)[:, None, None]).squeeze(
+            (-1, -2)
+        )
         # step 5.2 if configured, apply any penalties for sequences without EOS tokens
         # or shorter than a certain length
         if self._penalise_no_eos or self._min_response_length:
@@ -639,11 +655,9 @@ class FedPPORecipe(FTRecipeInterface):
             seq_lens,
         )
         value_padding_masks = response_padding_masks.clone()
-        value_padding_masks[
-            torch.arange(batch_size, device=value_padding_masks.device),
-            value_seq_idxs,
-        ] = False
-
+        value_padding_masks = value_padding_masks.scatter_(
+            1, value_seq_idxs.unsqueeze(-1), False
+        )
         values[value_padding_masks] = 0.0
 
         return Trajectory(
