@@ -33,10 +33,14 @@
 
 
 # Change those to your preference. Do not do that via CLI!
+prefix: /home/optteam/.torchtune
+
+project: TLDR
+group: PPO
 model: Mistral-7B-Base
 # model: Mistral-7B-Instruct
-prefix: /home/jovyan/ignashin/Sandbox/rlhf-and-friends/.torchtune
-output_dir: ${prefix}/checkpoints/${model}-LoRA-DirectKL-SelfAttraction-0.8
+
+output_dir: ${prefix}/checkpoints/${project}/${group}/${model}
 
 
 # Tokenizer
@@ -127,17 +131,17 @@ device: cuda
 
 # Training arguments
 batch_size: 64
-num_steps: 40000
+num_steps: 10000
 ppo_epochs: 2
 ppo_batch_size: 32
-gradient_accumulation_steps: 1  # Use to increase effective batch size
+gradient_accumulation_steps: 4 # Use to increase effective batch size
 
 # Memory management and performance
 compile: False # torch.compile the model + loss, True increases speed + decreases memory
 optimizer:
   _component_: bitsandbytes.optim.PagedAdamW
   lr: 1e-4
-optimizer_in_bwd: True  # True saves memory. Requires gradient_accumulation_steps=1
+optimizer_in_bwd: False # True saves memory. Requires gradient_accumulation_steps=1
 log_peak_memory_stats: True
 enable_activation_checkpointing: True  # True reduces memory
 
@@ -145,7 +149,7 @@ enable_activation_checkpointing: True  # True reduces memory
 dtype: bf16
 
 # batch size for forward pass during generation
-forward_batch_size: 16
+forward_batch_size: 8
 max_generated_tokens: 58
 temperature: 0.7
 top_k: null
@@ -180,18 +184,18 @@ kl:
   # coefficient for in-reward KL-Penalty
   reward_coeff: 0.01
   # coefficient for direct KL-Penalty
-  direct_coeff: 0.01
+  direct_coeff: 0.00
   # Regulates probability mass given to self-reference acc. to formula
   # ref = self_attraction * self_ref + (1 - self_attraction) * others_ref.mean()
-  self_attraction: 0.8
+  self_attraction: null
 
 # Logging
 wandb_logger:
   dir: ${prefix}
   entity: RADFAN
-  project: FedPPO
-  group: DirectKL-SelfAttraction-0.8
-  name: ${model}-LoRA
+  project: ${project}
+  group: ${group}
+  name: ${model}
 
 log_every_n_steps: 1
 update_ref_policy_every_n_steps: 13
