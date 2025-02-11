@@ -205,9 +205,9 @@ class FedPPORecipe(FTRecipeInterface):
         self._optimizer: Optional[Optimizer] = None
 
         if cfg.optimizer_in_bwd:
-            self._optimizer = self._setup_optimizer(cfg.optimizer)
+            self._setup_in_bwd_optimizer(cfg.optimizer)
         else:
-            self._setup_in_bwd_optimizer(cfg.optimzer)
+            self._optimizer = self._setup_optimizer(cfg.optimizer)
 
         # instantiate loss
         self._loss_fn = config.instantiate(cfg.loss)
@@ -334,7 +334,7 @@ class FedPPORecipe(FTRecipeInterface):
                 f"by gradient_accumulation_steps ({self._gradient_accumulation_steps})."
             )
 
-        if self._gradient_accumulation_steps > 1 and self._optimizer_in_bwd:
+        if self._gradient_accumulation_steps > 1 and not self._optimizer:
             raise RuntimeError(
                 "Gradient accumulation is not supported with optimizer in bwd."
                 "Please set gradient_accumulation_steps=1, or optimizer_in_bwd=False."
@@ -700,15 +700,16 @@ class FedPPORecipe(FTRecipeInterface):
                 batch = batch["tokens"].to(self._device)
                 _, context_length = batch.shape
 
-                # step 1. generate the trajectory using:
+
+                # log_rank_zero(log, "step 1. generate trajectories") # using:
                 # - the current policy (pi_theta)
                 # - the current value function (V_phi)
-                # - the reference frozen policy model (pi_theta_0)
+                # - the reference model (pi_theta_0)
                 trajectory = self.generate_trajectory_batched(batch)
 
-                # step 2. get the rewards for the current trajectory. these are based on:
-                #   - the divergence between the current policy and the reference policy
-                #   - the scores from the reward model
+                # log_rank_zero(log, "step 2. get the trakectory rewards") # based on:
+                # - the divergence between the current policy and the reference policy
+                # - the scores from the reward model
                 rewards, kl, kl_rewards = rlhf.get_rewards_ppo(
                     trajectory.scores,
                     trajectory.logprobs,
@@ -717,7 +718,7 @@ class FedPPORecipe(FTRecipeInterface):
                     trajectory.value_seq_idxs,
                 )
 
-                # step 3. estimate the advantages using Generalized Advantage Estimation (GAE)
+                # log_rank_zero(log, "step 3. estimate the advantages with GAE")
                 advantages, returns = rlhf.estimate_advantages(
                     trajectory.values,
                     rewards,
@@ -726,7 +727,7 @@ class FedPPORecipe(FTRecipeInterface):
                     masks=~trajectory.response_padding_masks,
                 )
 
-                # step 4. optimise using the PPO objective over multiple epochs
+                # log_rank_zero(log, "step 4. optimize with PPO objective over multiple epochs")
                 ppo_stats: List[PenalizedPPOStats] = []
                 for _ in range(self._ppo_epochs):
                     batch_idxs = torch.randperm(self.batch_size, device=self._device)
