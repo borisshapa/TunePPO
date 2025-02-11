@@ -38,16 +38,17 @@ prefix: /home/optteam/.torchtune
 project: TLDR
 group: PPO
 model: Mistral-7B-Base
+run: KV-Cache
 # model: Mistral-7B-Instruct
 
-output_dir: ${prefix}/checkpoints/${project}/${group}/${model}
+output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
 
 # Tokenizer
 tokenizer:
   _component_: torchtune.models.mistral.mistral_tokenizer
   path: ${prefix}/models/${model}/tokenizer.model
-  max_seq_len: null
+  max_seq_len: 2500
 
 # Dataset
 dataset:
@@ -143,7 +144,8 @@ optimizer:
   lr: 1e-4
 optimizer_in_bwd: False # True saves memory. Requires gradient_accumulation_steps=1
 log_peak_memory_stats: True
-enable_activation_checkpointing: True  # True reduces memory
+enable_activation_checkpointing: True # True reduces memory
+enable_kv_cache: True
 
 # Reduced precision
 dtype: bf16
@@ -195,7 +197,7 @@ wandb_logger:
   entity: RADFAN
   project: ${project}
   group: ${group}
-  name: ${model}
+  name: ${model}-${run}
 
 log_every_n_steps: 1
 update_ref_policy_every_n_steps: 13
