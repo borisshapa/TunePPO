@@ -33,7 +33,8 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-model: Mistral-7B-Base # or Mistral-7B-Instruct
+model: Mistral-7B-Base
+# model: Mistral-7B-Instruct
 prefix: /home/jovyan/ignashin/Sandbox/rlhf-and-friends/.torchtune
 output_dir: ${prefix}/checkpoints/${model}-LoRA-DirectKL-SelfAttraction-0.8
 
@@ -41,13 +42,14 @@ output_dir: ${prefix}/checkpoints/${model}-LoRA-DirectKL-SelfAttraction-0.8
 # Tokenizer
 tokenizer:
   _component_: torchtune.models.mistral.mistral_tokenizer
-  path: ${prefix}/models/Mistral-7B-v0.2/tokenizer.model
+  path: ${prefix}/models/${model}/tokenizer.model
   max_seq_len: null
 
 # Dataset
 dataset:
   _component_: torchtune.datasets.text_completion_dataset
-  source: trl-internal-testing/sentiment-trl-style
+  # source: trl-internal-testing/sentiment-trl-style
+  source: trl-lib/tldr
   split: train
   column: prompt
   add_eos: False
