@@ -46,7 +46,7 @@ Download Mistral models (choose prefix of your preference)
 tune download weqweasdas/RM-Mistral-7B --output-dir prefix/models/RM-Mistral-7B/
 # 2a. Get base Mistral-7B model
 tune download mistral-community/Mistral-7B-v0.2 --output-dir prefix/models/Mistral-7B-Base/
-# 2b. Or get-7B instruct model
+# 2b. Or get Mistral-7B instruct model
 tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir prefix/models/Mistral-7B-Instruct/
 ```
 Take a look at recipe config `~/destination/receipts/ppo/configs/mistral_7b.yaml` and set prefix variable there. This one is needed for the recipe to know where to load and save models, logs etc. Change other parameters to your preference.
