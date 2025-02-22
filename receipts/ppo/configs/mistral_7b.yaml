@@ -5,8 +5,9 @@
 #
 # This config assumes that you've run the following commands before launching
 # this run: (take a look what prefix is down the config)
-# 1. Download the reward model
-#   tune download weqweasdas/RM-Mistral-7B --output-dir ${prefix}/models/RM-Mistral-7B/
+# 1. Download a reward model
+#   a. (deprecated) tune download weqweasdas/RM-Mistral-7B --output-dir ${prefix}/models/RM-Mistral-7B/
+#   b. tune download RLHF-And-Friends/RM-TLDR-Mistral-7B-v0.2 --output-dir ~/.torchtune/models/RM-TLDR-Mistral-7B
 # 2a. Get base Mistral-7B model
 #   tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-Base/
 # 2b. Or get-7B instruct model
@@ -30,16 +31,18 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-prefix: /home/optteam/.torchtune
+# prefix: /home/optteam/.torchtune
+prefix: /home/arqa39/.torchtune
 
 project: TLDR
 group: PPO
 model: Mistral-7B-Base
-run: KV-Cache
 # model: Mistral-7B-Instruct
+reward: RM-TLDR-Mistral-7B
+# reward: RM-Mistral-7B (deprecated)
+run: TLDR-RM
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
-
 
 # Tokenizer
 tokenizer:
@@ -68,22 +71,9 @@ policy:
   lora_dropout: 0.0
   quantize_base: False # stands for 'Q' in QLoRA
 
-# we need to manually build the mistral classifier model
-# because our reward model checkpoint has a larger vocabulary size (due to an added padding token)
 # Value Model / Reward Model when adapter disabled
 valmod:
-  _component_: torchtune.models.mistral._component_builders.lora_mistral_classifier
-  # classifier base parameters
-  attn_dropout: 0.0
-  embed_dim: 4096
-  intermediate_dim: 14336
-  max_seq_len: 32768
-  norm_eps: 1.0e-05
-  num_classes: 1
-  num_heads: 32
-  num_kv_heads: 8
-  num_layers: 32
-  vocab_size: 32001
+  _component_: torchtune.models.mistral.lora_mistral_reward_7b
   # (Q)LoRA
   lora_attn_modules: ['q_proj', 'k_proj', 'v_proj', 'output_proj']
   apply_lora_to_mlp: True
@@ -111,7 +101,7 @@ checkpointer:
 # checkpointer for the value model initialized with the reward model weights
 value_checkpointer:
   _component_: torchtune.training.FullModelHFCheckpointer
-  checkpoint_dir: ${prefix}/models/RM-Mistral-7B/
+  checkpoint_dir: ${prefix}/models/${reward}/
   checkpoint_files:
     [
       "model-00001-of-00003.safetensors",
@@ -186,6 +176,7 @@ kl:
   direct_coeff: 0.00
   # Regulates probability mass given to self-reference acc. to formula
   # ref = self_attraction * self_ref + (1 - self_attraction) * others_ref.mean()
+  # Needed in cooperative setup
   self_attraction: null
 
 # Logging
