@@ -7,11 +7,11 @@
 # this run: (take a look what prefix is down the config)
 # 1. Download a reward model
 #   a. (deprecated) tune download weqweasdas/RM-Mistral-7B --output-dir ${prefix}/models/RM-Mistral-7B/
-#   b. tune download RLHF-And-Friends/RM-TLDR-Mistral-7B-v0.2 --output-dir ~/.torchtune/models/RM-TLDR-Mistral-7B
-# 2a. Get base Mistral-7B model
-#   tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-Base/
-# 2b. Or get-7B instruct model
-#   tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct/
+#   b. tune download RLHF-And-Friends/RM-TLDR-Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-RM/
+# 2. Get Mistral-7B model
+#   a. (Base) tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-Base/
+#   b. (Instruct) tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct/
+#   c. (SFT) tune download RLHF-And-Friends/SFT-TLDR-Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-SFT/
 #
 # You'll also need to ensure that {output_dir} exists beforehand, as checkpoints for policy and
 # value models as well as WandBLogger logs are saved in sub-folders.
@@ -36,11 +36,9 @@ prefix: /home/arqa39/.torchtune
 
 project: TLDR
 group: PPO
-model: Mistral-7B-Base
-# model: Mistral-7B-Instruct
-reward: RM-TLDR-Mistral-7B
-# reward: RM-Mistral-7B (deprecated)
-run: TLDR-RM
+model: Mistral-7B-SFT # | Mistral-7B-Base | Mistral-7B-Instruct
+reward: Mistral-7B-RM
+run: PPO
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
