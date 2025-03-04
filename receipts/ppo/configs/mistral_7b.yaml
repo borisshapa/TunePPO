@@ -11,7 +11,8 @@
 # 2. Get Mistral-7B model
 #   a. (Base) tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-Base/
 #   b. (Instruct) tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct/
-#   c. (SFT) tune download RLHF-And-Friends/SFT-TLDR-Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-SFT/
+#   c. (SFT) tune download RLHF-And-Friends/SFT-TLDR-Mistral-7B-v0.2 --output-dir ~/.torchtune/models/Mistral-7B-SFT/
+#   d. (SmallSFT) tune download RLHF-And-Friends/TLDR-Mistral-7B-SmallSFT --output-dir ~/.torchtune/models/Mistral-7B-SmallSFT/
 #
 # You'll also need to ensure that {output_dir} exists beforehand, as checkpoints for policy and
 # value models as well as WandBLogger logs are saved in sub-folders.
@@ -35,8 +36,8 @@
 prefix: /home/arqa39/.torchtune
 
 project: TLDR
-group: PPO
-model: Mistral-7B-SFT # | Mistral-7B-Base | Mistral-7B-Instruct
+group: Base-PPO
+model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: Mistral-7B-RM
 run: PPO
 
@@ -51,7 +52,7 @@ tokenizer:
 # Dataset
 dataset:
   _component_: torchtune.datasets.text_completion_dataset
-  # source: trl-internal-testing/sentiment-trl-style
+  # source: RLHF-And-Friends/tldr-ppo
   source: trl-lib/tldr
   split: train
   column: prompt
@@ -151,7 +152,6 @@ reward_penalty: -3
 # tokens to consider as "end of sequence" tokens
 stop_token_ids: [
     2, # eos_id
-    28723, # mistral "." token
   ]
 whiten_rewards: False
 
