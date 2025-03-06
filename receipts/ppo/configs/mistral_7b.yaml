@@ -39,7 +39,7 @@ project: TLDR
 group: Base-PPO
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: Mistral-7B-RM
-run: PPO
+run: PPO-Refactoring-Test
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
