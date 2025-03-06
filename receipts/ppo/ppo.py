@@ -481,7 +481,7 @@ class PPORecipe(FTRecipeInterface):
 
         # step 4. replace any tokens in the responses after the first stop token (usually EOS
         # token) with padding resulting in truncated responses
-        stop_token_ids = torch.tensor([self.tokenizer.eos_id], device=self._device)
+        stop_token_ids = torch.tensor([self._tokenizer.eos_id], device=self._device)
         response_padding_masks, responses = rlhf.truncate_sequence_at_first_stop_token(
             responses, stop_token_ids, self._tokenizer.pad_id
         )
