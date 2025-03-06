@@ -113,9 +113,6 @@ value_checkpointer:
 seed: 0xD1CE
 shuffle: True
 
-# Training env
-device: cuda
-
 # Training arguments
 batch_size: 64
 num_steps: 10000
@@ -124,17 +121,11 @@ ppo_batch_size: 32
 gradient_accumulation_steps: 4 # Use to increase effective batch size
 
 # Memory management and performance
-compile: False # torch.compile the model + loss, True increases speed + decreases memory
 optimizer:
   _component_: bitsandbytes.optim.PagedAdamW
   lr: 1e-4
-optimizer_in_bwd: False # True saves memory. Requires gradient_accumulation_steps=1
-log_peak_memory_stats: True
 enable_activation_checkpointing: True # True reduces memory
-enable_kv_cache: True
-
-# Reduced precision
-dtype: bf16
+dtype: bf16 # | fp32 | fp16 is not supported
 
 # batch size for forward pass during generation
 forward_batch_size: 8
@@ -149,10 +140,6 @@ penalise_no_eos: True
 # scalar penalty to apply when penalising
 reward_penalty: -3
 
-# tokens to consider as "end of sequence" tokens
-stop_token_ids: [
-    2, # eos_id
-  ]
 whiten_rewards: False
 
 # GAE hyperparameters
