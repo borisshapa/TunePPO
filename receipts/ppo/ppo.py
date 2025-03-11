@@ -638,8 +638,6 @@ class PPORecipe(FTRecipeInterface):
                             batch_ppo_stats.append(
                                 self._ppo_step(
                                     batch_trajectory,
-                                    batch_trajectory.advantages,
-                                    batch_trajectory.returns,
                                     context_length,
                                 )
                             )
@@ -688,18 +686,13 @@ class PPORecipe(FTRecipeInterface):
     def _ppo_step(
         self,
         trajectory: ExtendedTrajectory,
-        advantages: torch.Tensor,
-        returns: torch.Tensor,
         context_length: int,
     ) -> PenalizedPPOStats:
         """
-        Perform a single PPO optimisation step over a batch of trajectories and corresponding
-        advantages and returns.
+        Perform a single PPO optimisation step over a batch of trajectories
 
         Args:
             trajectory (Trajectory): a batch of trajectories
-            advantages (torch.Tensor): advantages corresponding to the trajectories
-            returns (torch.Tensor): returns corresponding the trajectories
             context_length (int): input ids sequence length
 
         Returns:
@@ -745,10 +738,10 @@ class PPORecipe(FTRecipeInterface):
         loss, policy_loss, value_loss, ratios, clipfrac = self._loss_fn(
             trajectory.logprobs,
             pi_logprobs,
-            advantages,
+            trajectory.advantages,
             trajectory.values,
             phi_values,
-            returns,
+            trajectory.returns,
             padding_masks=~trajectory.response_padding_masks,
             value_padding_masks=~trajectory.value_padding_masks,
         )
