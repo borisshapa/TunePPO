@@ -27,13 +27,12 @@ from torchtune.modules.peft import (
 )
 from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
-from torchtune.rlhf import Trajectory
 from torchtune.training.checkpointing import Checkpointer
 from torchtune.training.metric_logging import WandBLogger
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
-from ppotune.datatypes import PenalizedPPOStats
+from ppotune.datatypes import PenalizedPPOStats, ExtendedTrajectory
 from ppotune.dist import DistributedPolicyMixture
 from ppotune.loss import KLPenalty
 from ppotune.peft import (
@@ -413,7 +412,7 @@ class PPORecipe(FTRecipeInterface):
             epoch=epoch
         )
 
-    def generate_trajectory(self, input_ids: torch.Tensor) -> Trajectory:
+    def generate_trajectory(self, input_ids: torch.Tensor) -> ExtendedTrajectory:
         """
         Generates a trajectory given the current policy and value models, the reference policy
         model, the reward model, and batch of inputs. This is done over the following steps:
@@ -529,7 +528,27 @@ class PPORecipe(FTRecipeInterface):
         )
         values[value_padding_masks] = 0.0
 
-        return Trajectory(
+        # step 7. get the trajectory rewards based on:
+        # - the divergence between the current policy and the reference policy
+        # - the scores from the reward model
+        rewards, kl, kl_rewards = rlhf.get_rewards_ppo(
+            scores,
+            logprobs,
+            ref_logprobs,
+            self._kl_coeff,
+            value_seq_idxs,
+        )
+
+        # step 8. estimate the advantages with GAE
+        advantages, returns = rlhf.estimate_advantages(
+            values,
+            rewards,
+            self._gamma,
+            self._lmbda,
+            masks=~response_padding_masks,
+        )
+
+        return ExtendedTrajectory(
             query_responses=query_responses,
             logprobs=logprobs,
             ref_logprobs=ref_logprobs,
@@ -541,9 +560,13 @@ class PPORecipe(FTRecipeInterface):
             value_seq_idxs=value_seq_idxs,
             scores=scores,
             seq_lens=seq_lens,
+            kl=kl,
+            kl_rewards=kl_rewards,
+            advantages=advantages,
+            returns=returns
         )
 
-    def generate_trajectory_batched(self, input_ids: torch.Tensor) -> Trajectory:
+    def generate_trajectory_batched(self, input_ids: torch.Tensor) -> ExtendedTrajectory:
         """
         Generates a ``self.batch_size`` batch of trajectories using `self._forward_batch_size`
         batch sizes. See ``generate_trajectory`` for more details.
@@ -555,14 +578,14 @@ class PPORecipe(FTRecipeInterface):
             Trajectory: An instance of :class:`~torchtune.rlhf.Trajectory`, comprising
                 the current trajectory.
         """
-        trajectories: List[Trajectory] = []
+        trajectories: List[ExtendedTrajectory] = []
         with torch.no_grad():
             for batch_start in range(0, self.batch_size, self._forward_batch_size):
                 batch_input_ids = input_ids[
                     batch_start : batch_start + self._forward_batch_size
                 ]
                 trajectories.append(self.generate_trajectory(batch_input_ids))
-        return Trajectory(*map(torch.cat, zip(*trajectories)))
+        return ExtendedTrajectory(*map(torch.cat, zip(*trajectories)))
 
     def train(self) -> None:
         """
@@ -581,34 +604,13 @@ class PPORecipe(FTRecipeInterface):
                 batch = batch["tokens"].to(self._device)
                 _, context_length = batch.shape
 
-
-                # log_rank_zero(log, "step 1. generate trajectories") # using:
+                # generate trajectories using:
                 # - the current policy (pi_theta)
                 # - the current value function (V_phi)
                 # - the reference model (pi_theta_0)
                 trajectory = self.generate_trajectory_batched(batch)
 
-                # log_rank_zero(log, "step 2. get the trakectory rewards") # based on:
-                # - the divergence between the current policy and the reference policy
-                # - the scores from the reward model
-                rewards, kl, kl_rewards = rlhf.get_rewards_ppo(
-                    trajectory.scores,
-                    trajectory.logprobs,
-                    trajectory.ref_logprobs,
-                    self._kl_coeff,
-                    trajectory.value_seq_idxs,
-                )
-
-                # log_rank_zero(log, "step 3. estimate the advantages with GAE")
-                advantages, returns = rlhf.estimate_advantages(
-                    trajectory.values,
-                    rewards,
-                    self._gamma,
-                    self._lmbda,
-                    masks=~trajectory.response_padding_masks,
-                )
-
-                # log_rank_zero(log, "step 4. optimize with PPO objective over multiple epochs")
+                # optimize with PPO objective over multiple epochs
                 ppo_stats: List[PenalizedPPOStats] = []
                 for _ in range(self._ppo_epochs):
                     batch_idxs = torch.randperm(self.batch_size, device=self._device)
@@ -623,7 +625,7 @@ class PPORecipe(FTRecipeInterface):
                                 j : j + self._ppo_backward_batch_size
                             ]
 
-                            batch_trajectory = Trajectory(
+                            batch_trajectory = ExtendedTrajectory(
                                 *map(
                                     partial(
                                         torch.index_select,
@@ -636,8 +638,8 @@ class PPORecipe(FTRecipeInterface):
                             batch_ppo_stats.append(
                                 self._ppo_step(
                                     batch_trajectory,
-                                    advantages[backward_batch_idxs],
-                                    returns[backward_batch_idxs],
+                                    batch_trajectory.advantages,
+                                    batch_trajectory.returns,
                                     context_length,
                                 )
                             )
@@ -661,12 +663,10 @@ class PPORecipe(FTRecipeInterface):
                     self.log_metrics(
                         trajectory,
                         PenalizedPPOStats(*map(torch.stack, zip(*ppo_stats))),
-                        kl,
-                        kl_rewards,
                         **grad_logs
                     )
                 self.cleanup_after_step(
-                    trajectory, ppo_stats, advantages, returns, kl, kl_rewards
+                    trajectory, ppo_stats
                 )
                 if self._steps_run % self._update_ref_policy_every_n_steps == 0:
                     # effectively update reference policy.
@@ -687,7 +687,7 @@ class PPORecipe(FTRecipeInterface):
 
     def _ppo_step(
         self,
-        trajectory: Trajectory,
+        trajectory: ExtendedTrajectory,
         advantages: torch.Tensor,
         returns: torch.Tensor,
         context_length: int,
@@ -787,10 +787,8 @@ class PPORecipe(FTRecipeInterface):
 
     def log_metrics(
         self,
-        trajectory: Trajectory,
+        trajectory: ExtendedTrajectory,
         ppo_stats: PenalizedPPOStats,
-        kl: torch.Tensor,
-        kl_rewards: torch.Tensor,
         **kwargs
     ) -> None:
         """
@@ -799,9 +797,9 @@ class PPORecipe(FTRecipeInterface):
         log_dict = {
             "scores": trajectory.scores.mean(),
             "num_stop_tokens": trajectory.response_padding_masks.any(-1).sum(),
-            "rlhf_reward": trajectory.scores.mean() + kl_rewards.sum(1).mean(),
-            "kl": kl.sum(1).mean(),
-            "kl_reward": kl_rewards.sum(1).mean(),
+            "rlhf_reward": trajectory.scores.mean() + trajectory.kl_rewards.sum(1).mean(),
+            "kl": trajectory.kl.sum(1).mean(),
+            "kl_reward": trajectory.kl_rewards.sum(1).mean(),
             "kl_penalty": ppo_stats.kl_penalty.mean(),
             "loss": ppo_stats.loss.mean(),
             "policy_loss": ppo_stats.policy_loss.mean(),
@@ -817,12 +815,8 @@ class PPORecipe(FTRecipeInterface):
 
     def cleanup_after_step(
         self,
-        trajectory: Trajectory,
+        trajectory: ExtendedTrajectory,
         ppo_stats: PenalizedPPOStats,
-        advantages: torch.Tensor,
-        returns: torch.Tensor,
-        kl: torch.Tensor,
-        kl_rewards: torch.Tensor,
     ) -> None:
         """
         Cleanup tensors after each PPO step to free up memory.
@@ -835,10 +829,6 @@ class PPORecipe(FTRecipeInterface):
         for v in ppo_stats:
             del v
         del ppo_stats
-        del advantages
-        del returns
-        del kl
-        del kl_rewards
 
     def cleanup(self, **kwargs) -> None:
         self._metric_logger.close()
