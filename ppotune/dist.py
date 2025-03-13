@@ -66,7 +66,7 @@ def rank_preferred_mean(
         return tensors[0]
 
     if not self_preference:
-        return tensors.mean()
+        return torch.stack(tensors).mean(dim=0)
 
     assert (0.0 <= self_preference) and (self_preference <= 1.0)
 
