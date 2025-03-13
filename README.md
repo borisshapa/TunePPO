@@ -53,6 +53,6 @@ Take a look at recipe config `~/destination/receipts/ppo/configs/mistral_7b.yaml
 
 Run the recipe for N processes (one per agent) starting from 1. Single process run would be a regular PPO. Non-quantized setup would take something like single 40Gb A100 per process.
 ```
-tune run ~/destination/receipts/ppo.py --nproc_per_node N --config ~/destination/configs/mistral_7b.yaml
+tune run ~/destination/receipts/ppo/ppo.py --nproc_per_node N --config ~/destination/receipts/ppo/configs/mistral_7b.yaml
 ```
 This is the very first version so some workaround would be inevitable. Feel free to check out torchtune docs like ones about [recipes](https://pytorch.org/torchtune/stable/deep_dives/recipe_deepdive.html#recipe-deepdive) and [configs](https://pytorch.org/torchtune/stable/deep_dives/configs.html) to figure out what's going on here.
