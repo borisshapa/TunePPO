@@ -32,6 +32,7 @@ from torchtune.training.metric_logging import WandBLogger
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
+from ppotune.advantage import PPOAdvatageModel, PPOAdvantageModelResult
 from ppotune.datatypes import PenalizedPPOStats, ExtendedTrajectory
 from ppotune.dist import DistributedPolicyMixture
 from ppotune.loss import KLPenalty
@@ -180,6 +181,18 @@ class PPORecipe(FTRecipeInterface):
             self._valmod.parameters()
         ))
 
+        self.ae = PPOAdvatageModel(
+                scorer=self._valmod,
+                gamma=cfg.gamma,
+                lmbda=cfg.lmbda,
+                kl_coeff=cfg.kl.reward_coeff,
+                penalise_no_eos=cfg.penalise_no_eos,
+                reward_penalty=cfg.reward_penalty,
+                min_response_len=cfg.min_response_length,
+                max_response_len=cfg.max_generated_tokens,
+                pad_id=self._tokenizer.pad_id
+        )
+
         # instantiate loss
         self._loss_fn = config.instantiate(cfg.loss)
 
@@ -232,23 +245,10 @@ class PPORecipe(FTRecipeInterface):
         Sets up the training hyperparameters for the recipe. This includes the GAE hyperparameters,
         generation hyperparameters, reward masking hyperparameters, and stop token ids.
         """
-        # KL-penalty coefficient
-        self._kl_coeff = cfg.kl.reward_coeff
-
-        # GAE hyperparameters
-        self._gamma = cfg.gamma
-        self._lmbda = cfg.lmbda
-        self._whiten_rewards = cfg.whiten_rewards
-
         # trajectory generation args
         self._temperature = cfg.temperature
         self._top_k = cfg.top_k
         self._max_generated_tokens = cfg.max_generated_tokens
-
-        # reward masking args
-        self._min_response_length = cfg.min_response_length
-        self._penalise_no_eos = cfg.penalise_no_eos
-        self._reward_penalty = cfg.reward_penalty
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
         """
@@ -433,9 +433,11 @@ class PPORecipe(FTRecipeInterface):
             Trajectory: An instance of :class:`~torchtune.rlhf.Trajectory` comprising
                 the current trajectory.
         """
-        # step 1: generate responses, and logits corresponding to the responses using the policy
+        query_len = input_ids.shape[1]
+
+        #  generate responses and logits
         with self.cache_ctx_manager():
-            query_responses, logits = generation.generate(
+            tokens, logits = generation.generate(
                 model=self._policy,
                 prompt=input_ids,
                 max_generated_tokens=self._max_generated_tokens,
@@ -444,126 +446,68 @@ class PPORecipe(FTRecipeInterface):
                 pad_id=self._tokenizer.pad_id,
                 rng=self._rng,
             )
-        _, context_length = input_ids.shape
-        responses = query_responses[:, context_length:].clone()
-        query_response_padding_masks = query_responses != self._tokenizer.pad_id
 
-        # step 1.1 create attention masks and position IDs for any padding tokens in inputs,
-        # used for future forward passes
-        masks = generation.get_causal_mask_from_padding_mask(
-            query_response_padding_masks
+        tokens_pad_mask = tokens != self._tokenizer.pad_id
+
+        queries = tokens[:, :query_len]
+        queries_pad_mask = tokens_pad_mask[:, :query_len]
+
+        responses = tokens[:, query_len:]
+        # pad responses after eos token
+        eos_mask = (responses == self._tokenizer.eos_id)
+        seen_eos = torch.cumsum(eos_mask, dim=1)
+        responses_pad_mask = (seen_eos > 1) | ((seen_eos == 1) & ~eos_mask)
+
+        # create attention masks and position IDs for follow up generation
+        causal_mask = generation.get_causal_mask_from_padding_mask(
+            tokens_pad_mask
         )
         position_ids = generation.get_position_ids_from_padding_mask(
-            query_response_padding_masks
+            tokens_pad_mask
         )
 
-        del query_response_padding_masks
-
-        # step 2. estimate logprobs of the responses using the current policy
-        logprobs = rlhf.logits_to_logprobs(logits, responses, self._temperature)
-
-        del logits
-
-        # step 2.1 estimate logprobs of the responses using the reference policy
+        # generate reference logits
         with torch.no_grad(), disable_adapter(self._policy):
             ref_logits = self._ref_policy(
-                query_responses, input_pos=position_ids, mask=masks
+                tokens, input_pos=position_ids, mask=causal_mask
             )
-        ref_logits = rlhf.truncate_sequence_for_logprobs(ref_logits, context_length)
-        ref_logprobs = rlhf.logits_to_logprobs(ref_logits, responses, self._temperature)
+        ref_logits = ref_logits[:, query_len - 1 : -1]
 
+        # estimate logprobs of the responses w.r.t. generation policy
+        gen_logprobs = rlhf.logits_to_logprobs(logits, responses, self._temperature)
+        gen_logprobs[responses_pad_mask] = 1.0
+        del logits
+
+        # estimate logprobs of the responses w.r.t. reference policy
+        ref_logprobs = rlhf.logits_to_logprobs(ref_logits, responses, self._temperature)
+        ref_logprobs[responses_pad_mask] = 1.0
         del ref_logits
 
-        # step 3. estimate values from the responses using the value function
-        values = self._valmod(query_responses, input_pos=position_ids, mask=masks)
-        values = rlhf.truncate_sequence_for_logprobs(values, context_length).squeeze(-1)
-
-        # step 4. replace any tokens in the responses after the first stop token (usually EOS
-        # token) with padding resulting in truncated responses
-        stop_token_ids = torch.tensor([self._tokenizer.eos_id], device=self._device)
-        response_padding_masks, responses = rlhf.truncate_sequence_at_first_stop_token(
-            responses, stop_token_ids, self._tokenizer.pad_id
+        ae: PPOAdvantageModelResult = self.ae(
+            tokens,
+            causal_mask,
+            position_ids,
+            queries_pad_mask,
+            responses_pad_mask,
+            gen_logprobs,
+            ref_logprobs
         )
-
-        # step 5. run the reward model on the (query, truncated-response) pairs
-        with torch.no_grad(), disable_adapter(self._valmod):
-            scores = self._valmod(
-                torch.cat([input_ids, responses], dim=1),
-                input_pos=position_ids,
-                mask=masks,
-            )
-
-        del responses
-
-        # step 5.1 the scores from the reward model are the logits for the last non-padding token
-        # in each (query, truncated-response) pair
-        seq_lens = training.get_unmasked_sequence_lengths(response_padding_masks)
-        scores = scores.gather(1, (seq_lens + context_length)[:, None, None]).squeeze(
-            (-1, -2)
-        )
-        # step 5.2 if configured, apply any penalties for sequences without EOS tokens
-        # or shorter than a certain length
-        if self._penalise_no_eos or self._min_response_length:
-            reward_penalty_mask = rlhf.get_reward_penalty_mask(
-                response_padding_masks,
-                seq_lens,
-                self._penalise_no_eos,
-                self._min_response_length,
-            )
-            scores[reward_penalty_mask] = self._reward_penalty
-
-        # step 6. mask out all the invalid values in the trajectory due to padding tokens
-        logprobs[response_padding_masks] = 1.0
-        ref_logprobs[response_padding_masks] = 1.0
-
-        # step 6.1 values are masked out *after* the last valid token in the response
-        value_seq_idxs = torch.where(
-            (seq_lens > 0) & (seq_lens < self._max_generated_tokens - 1),
-            seq_lens + 1,
-            seq_lens,
-        )
-        value_padding_masks = response_padding_masks.clone()
-        value_padding_masks = value_padding_masks.scatter_(
-            1, value_seq_idxs.unsqueeze(-1), False
-        )
-        values[value_padding_masks] = 0.0
-
-        # step 7. get the trajectory rewards based on:
-        # - the divergence between the current policy and the reference policy
-        # - the scores from the reward model
-        rewards, kl, kl_rewards = rlhf.get_rewards_ppo(
-            scores,
-            logprobs,
-            ref_logprobs,
-            self._kl_coeff,
-            value_seq_idxs,
-        )
-
-        # step 8. estimate the advantages with GAE
-        advantages, returns = rlhf.estimate_advantages(
-            values,
-            rewards,
-            self._gamma,
-            self._lmbda,
-            masks=~response_padding_masks,
-        )
-
         return ExtendedTrajectory(
-            query_responses=query_responses,
-            logprobs=logprobs,
+            query_responses=tokens,
+            logprobs=gen_logprobs,
             ref_logprobs=ref_logprobs,
-            values=values,
-            masks=masks,
+            values=ae.values,
+            masks=causal_mask,
             position_ids=position_ids,
-            response_padding_masks=response_padding_masks,
-            value_padding_masks=value_padding_masks,
-            value_seq_idxs=value_seq_idxs,
-            scores=scores,
-            seq_lens=seq_lens,
-            kl=kl,
-            kl_rewards=kl_rewards,
-            advantages=advantages,
-            returns=returns
+            response_padding_masks=responses_pad_mask,
+            value_padding_masks=ae.value_pad_mask,
+            value_seq_idxs=ae.score_pos,
+            scores=ae.scores,
+            seq_lens=ae.score_pos,
+            kl=ae.kl,
+            kl_rewards=ae.kl_rewards,
+            advantages=ae.advantages,
+            returns=ae.returns
         )
 
     def generate_trajectory_batched(self, input_ids: torch.Tensor) -> ExtendedTrajectory:

@@ -78,3 +78,15 @@ class PenalizedPPOStats(tp.NamedTuple):
     clipfrac: torch.Tensor
     approx_policy_kls: torch.Tensor
     kl_penalty: torch.Tensor
+
+
+class PPOAdvantageModelResult(tp.NamedTuple):
+    values: torch.Tensor
+    value_pad_mask: torch.Tensor
+    value_last_pos: torch.Tensor
+    scores: torch.Tensor
+    score_pos: torch.Tensor
+    kl: torch.Tensor
+    kl_rewards: torch.Tensor
+    advantages: torch.Tensor
+    returns: torch.Tensor
