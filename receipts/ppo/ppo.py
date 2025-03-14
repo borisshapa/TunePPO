@@ -190,7 +190,6 @@ class PPORecipe(FTRecipeInterface):
                 reward_penalty=cfg.reward_penalty,
                 min_response_len=cfg.min_response_length,
                 max_response_len=cfg.max_generated_tokens,
-                pad_id=self._tokenizer.pad_id
         )
 
         # instantiate loss
@@ -448,8 +447,6 @@ class PPORecipe(FTRecipeInterface):
             )
 
         tokens_pad_mask = tokens != self._tokenizer.pad_id
-
-        queries = tokens[:, :query_len]
         queries_pad_mask = tokens_pad_mask[:, :query_len]
 
         responses = tokens[:, query_len:]
@@ -467,9 +464,11 @@ class PPORecipe(FTRecipeInterface):
         )
 
         # generate reference logits
-        with torch.no_grad(), disable_adapter(self._policy):
+        with disable_adapter(self._policy):
             ref_logits = self._ref_policy(
-                tokens, input_pos=position_ids, mask=causal_mask
+                tokens,
+                input_pos=position_ids,
+                mask=causal_mask
             )
         ref_logits = ref_logits[:, query_len - 1 : -1]
 

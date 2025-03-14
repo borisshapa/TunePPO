@@ -23,7 +23,6 @@ class PPOAdvatageModel(nn.Module):
         reward_penalty: int = -3,
         min_response_len: int = 0,
         max_response_len: int = 1024,
-        pad_id: int = 0,
     ) -> None:
 
         super().__init__()
@@ -36,8 +35,8 @@ class PPOAdvatageModel(nn.Module):
         self.reward_penalty = reward_penalty
         self.min_response_len = min_response_len
         self.max_response_len = max_response_len
-        self.pad_id = pad_id
 
+    from torchtune.rlhf.loss import PPOLoss
     def forward(
         self,
         tokens:             torch.Tensor, # B x (Q + R)
@@ -60,16 +59,12 @@ class PPOAdvatageModel(nn.Module):
         values = values[:, queries_len - 1 : -1]
 
         # estimate scores with reward model
-        queries = tokens[:, :queries_len]
-        truncated_responses = tokens[:,queries_len:].clone()
-        truncated_responses[responses_pad_mask] = self.pad_id
-        with torch.no_grad(), disable_adapter(self.scorer):
+        with disable_adapter(self.scorer):
             scores = self.scorer(
-                torch.cat([queries, truncated_responses], dim=1),
+                tokens,
                 input_pos=position_ids,
                 mask=causal_mask
             )
-        del truncated_responses
 
         # the scores from the reward model are the logits for the last non-padding token
         response_last_pos = get_unmasked_sequence_lengths(responses_pad_mask)
