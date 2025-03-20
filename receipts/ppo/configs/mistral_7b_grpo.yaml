@@ -1,4 +1,4 @@
-# Config for single device RLHF (Q)LoRA PPO finetuning of Mistral 7B model.
+# Config for single device RLHF (Q)LoRA GRPO finetuning of Mistral 7B model.
 #
 # This config uses hyperparameters based on small set of experiments and information
 # available from existing implementations.
@@ -36,10 +36,10 @@
 prefix: /home/arqa39/.torchtune
 
 project: TLDR
-group: Base-PPO
+group: Base-GPPO
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: Mistral-7B-RM
-run: PPO-Refactored
+run: GRPO
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
@@ -115,7 +115,7 @@ shuffle: True
 
 # Training arguments
 batch_size: 64
-group_size: 1 # needed in GRPO. just leave it as is.
+group_size: 8
 num_steps: 10000
 ppo_epochs: 2
 ppo_batch_size: 32
@@ -135,32 +135,29 @@ temperature: 0.7
 top_k: null
 
 sampler:
-  _component_: torch.utils.data.DistributedSampler
+  _component_: ppotune.sample.StickyDistributedSampler
+  num_duplicates: ${group_size}
 
 reward_model:
-  _component_: ppotune.reward.PerTokenKLPenalizedRewardModel
-  min_response_len: 18   # would penalize generations shorter than
+  _component_: ppotune.reward.LLMRewardModel
+  min_response_len: 18      # would penalize generations shorter than
   penalise_no_eos: True     # would penalize generations with no eos
   reward_penalty: -3        # penalty value
-  kl_coeff: 0.01            # per token kl-penalty coefficient
 
 advantage_model:
-  _component_: ppotune.advantage.LLMCriticGAE
-  gamma: 1
-  lmbda: 0.95
-  value_coeff: 0.1
-  value_clip_range: 0.2
+  _component_: ppotune.advantage.GRAE
+  group_size: ${group_size}
 
 kl_penalty:
   _component_: ppotune.loss.KLPenalty
-  coeff: 0.00
+  coeff: 0.01
 
 reference_model:
   _component_: ppotune.dist.DistributedPolicyMixture
   # Regulates probability mass given to self-reference acc. to formula
   # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
   # Needed in cooperative setup. In single-agent setup set to null
-  self_preference: null 
+  self_preference: null
 
 # PPO Loss
 # clipping hyperparameter

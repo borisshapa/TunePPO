@@ -78,8 +78,8 @@ class LLMRewardModel(IRewardModel):
         return RMReturnType(
             scores=scores,
             rewards=scores,
-            kl=torch.zeros_like(scores), # irrelevant
-            kl_rewards=torch.zeros_like(scores) # irrelevant
+            kl=torch.zeros_like(scores).unsqueeze(-1), # irrelevant
+            kl_rewards=torch.zeros_like(scores).unsqueeze(-1) # irrelevant
         )
 
 

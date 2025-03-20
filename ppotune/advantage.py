@@ -139,6 +139,7 @@ class GRAE(IAdvantageModel):
     """
     def __init__(self, group_size: int, **kwargs) -> None:
         self.group_size = group_size
+        self.value_coeff = 1.0 # todo: remove
 
     @torch.no_grad()
     def __call__(self,
@@ -152,7 +153,7 @@ class GRAE(IAdvantageModel):
         advantages = (scores - scores.mean(1, keepdim=True)) / (
             scores.std(1, keepdim=True) + 1e-4
         )
-        advantages = advantages.flatten()
+        advantages = advantages.flatten().unsqueeze(-1)
 
         return AEReturnType(
             advantages=advantages,
@@ -161,4 +162,4 @@ class GRAE(IAdvantageModel):
         )
 
     def loss(self, **kwargs) -> torch.Tensor:
-        return 0
+        return torch.tensor(0)

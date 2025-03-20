@@ -16,7 +16,8 @@ import torch.distributed as dist
 from omegaconf import DictConfig
 from torch import nn
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
+from torch.utils.data.sampler import Sampler
 from torchtune import config, generation, modules, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.modules import TransformerDecoder, local_kv_cache
@@ -32,8 +33,13 @@ from torchtune.training.metric_logging import WandBLogger
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
-from ppotune.advantage import IAdvantageModel, AEReturnType
-from ppotune.datatypes import PenalizedPPOStats, ExtendedTrajectory
+from ppotune.advantage import IAdvantageModel
+from ppotune.datatypes import (
+    PenalizedPPOStats,
+    ExtendedTrajectory,
+    AEReturnType,
+    RMReturnType
+)
 from ppotune.dist import DistributedPolicyMixture
 from ppotune.loss import KLPenalty
 from ppotune.peft import (
@@ -198,6 +204,7 @@ class PPORecipe(FTRecipeInterface):
         # setup sampler and dataloader
         self._sampler, self._dataloader = self._setup_data(
             cfg_dataset = cfg.dataset,
+            cfg_sampler = cfg.sampler,
             tokenizer   = self._tokenizer,
             shuffle     = cfg.shuffle,
             batch_size  = cfg.batch_size,
@@ -245,7 +252,7 @@ class PPORecipe(FTRecipeInterface):
         """
         # set different output dir names for each agent
         output_dir = ckpt_cfg.output_dir
-        output_dir = f"{output_dir}-{dist.get_rank()}/{dist.get_world_size() - 1}"
+        output_dir = f"{output_dir}-{dist.get_rank()}-of-{dist.get_world_size() - 1}"
 
         checkpointer: Checkpointer = config.instantiate(
             ckpt_cfg,
@@ -281,6 +288,7 @@ class PPORecipe(FTRecipeInterface):
                 - num_steps is less than batch_size
         """
         self.batch_size = cfg.batch_size
+        self.group_size = cfg.group_size
         self._forward_batch_size = cfg.forward_batch_size
         self._ppo_epochs = cfg.ppo_epochs
         self._ppo_batch_size = cfg.ppo_batch_size
@@ -303,6 +311,17 @@ class PPORecipe(FTRecipeInterface):
             raise ValueError(
                 f"ppo_batch_size ({self._ppo_batch_size}) must be exactly divisible "
                 f"by gradient_accumulation_steps ({self._gradient_accumulation_steps})."
+            )
+
+        if self.batch_size % self.group_size != 0:
+            raise ValueError(
+                f"batch_size ({self.batch_size}) must be exactly divisible by "
+                f"group_size({self.group_size})."
+            )
+        if self._forward_batch_size % self.group_size != 0:
+            raise ValueError(
+                f"forward_batch_size ({self._forward_batch_size}) must be exactly divisible by "
+                f"group_size({self.group_size})."
             )
 
         self._total_steps = cfg.num_steps // (self.batch_size * dist.get_world_size())
@@ -358,19 +377,24 @@ class PPORecipe(FTRecipeInterface):
     def _setup_data(
         self,
         cfg_dataset: DictConfig,
+        cfg_sampler: DictConfig,
         tokenizer: ModelTokenizer,
         batch_size: int,
         shuffle: bool,
-    ) -> Tuple[DistributedSampler, DataLoader]:
+    ) -> Tuple[Sampler, DataLoader]:
         """
         All data related setup happens here.
         """
-        dataset = config.instantiate(cfg_dataset, tokenizer=tokenizer)
-        sampler = DistributedSampler(
+        dataset = config.instantiate(
+            cfg_dataset,
+            tokenizer=tokenizer
+        )
+        sampler: Sampler = config.instantiate(
+            cfg_sampler,
             dataset=dataset,
             shuffle=shuffle,
             drop_last=True
-        )
+        ) # better set seed here
         collator = partial(
             padded_collate,
             pad_direction="left",
@@ -456,20 +480,20 @@ class PPORecipe(FTRecipeInterface):
         ref_logprobs[responses_pad_mask] = 1.0
         del ref_logits
 
-        rr = self.rm(
+        rr: RMReturnType = self.rm(
             tokens,
             causal_mask,
             position_ids,
             responses_pad_mask,
-            gen_logprobs,
-            ref_logprobs
+            gen_logprobs=gen_logprobs,
+            ref_logprobs=ref_logprobs
         )
-        aa = self.ae(
-            rr.rewards,
-            tokens,
-            causal_mask,
-            position_ids,
-            responses_pad_mask,
+        aa: AEReturnType = self.ae(
+            rewards=rr.rewards,
+            tokens=tokens,
+            causal_mask=causal_mask,
+            position_ids=position_ids,
+            responses_pad_mask=responses_pad_mask,
         )
         return ExtendedTrajectory(
             query_responses=tokens,
@@ -660,12 +684,12 @@ class PPORecipe(FTRecipeInterface):
         policy_loss = rlhf.masked_mean(policy_loss, ~trajectory.response_padding_masks)
 
         value_loss = self.ae.loss(
-            trajectory.query_responses,
-            trajectory.masks,
-            trajectory.position_ids,
-            trajectory.response_padding_masks,
-            trajectory.values,
-            trajectory.returns
+            tokens=trajectory.query_responses,
+            causal_mask=trajectory.masks,
+            position_ids=trajectory.position_ids,
+            responses_pad_mask=trajectory.response_padding_masks,
+            inference_values=trajectory.values,
+            inference_returns=trajectory.returns
         )
         kl_penalty = self.kl(
             logprobs,
