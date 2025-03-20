@@ -2,6 +2,19 @@ import torch
 import typing as tp
 
 
+class AEReturnType(tp.NamedTuple):
+    advantages: torch.Tensor
+    values: torch.Tensor
+    returns: torch.Tensor
+
+
+class RMReturnType(tp.NamedTuple):
+    scores: torch.Tensor
+    rewards: torch.Tensor
+    kl: torch.Tensor
+    kl_rewards: torch.Tensor
+
+
 class ExtendedTrajectory(tp.NamedTuple):
     """
     Contains a collection of tensors describing a generated trajectory during RLHF
@@ -21,14 +34,7 @@ class ExtendedTrajectory(tp.NamedTuple):
             shape [b, context_length + max_generated_tokens]
         response_padding_masks (torch.Tensor): padding masks for the truncated and padded generated responses
             shape [b, max_generated_tokens]
-        value_padding_masks (torch.Tensor): padding masks for the values with
-            shape [b, max_generated_tokens]
-        value_seq_idxs (torch.Tensor): indexes of the token
-            after the last valid (non-padding) token in the responses with
-            shape [b]
         scores (torch.Tensor): scores from the reward model with
-            shape [b]
-        seq_lens (torch.Tensor): sequence lengths of truncated generated responses with
             shape [b]
         kl (torch.Tensor) kl divergence between policy and reference policy logprobs with
             shape [b, response_len]
@@ -46,10 +52,7 @@ class ExtendedTrajectory(tp.NamedTuple):
     masks: torch.Tensor
     position_ids: torch.Tensor
     response_padding_masks: torch.Tensor
-    value_padding_masks: torch.Tensor
-    value_seq_idxs: torch.Tensor
     scores: torch.Tensor
-    seq_lens: torch.Tensor
     kl: torch.Tensor
     kl_rewards: torch.Tensor
     advantages: torch.Tensor
@@ -83,9 +86,7 @@ class PenalizedPPOStats(tp.NamedTuple):
 class PPOAdvantageModelResult(tp.NamedTuple):
     values: torch.Tensor
     value_pad_mask: torch.Tensor
-    value_last_pos: torch.Tensor
     scores: torch.Tensor
-    score_pos: torch.Tensor
     kl: torch.Tensor
     kl_rewards: torch.Tensor
     advantages: torch.Tensor

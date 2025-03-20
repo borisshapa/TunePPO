@@ -32,7 +32,7 @@ from torchtune.training.metric_logging import WandBLogger
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
-from ppotune.advantage import PPOAdvatageModel, PPOAdvantageModelResult
+from ppotune.advantage import IAdvantageModel, AEReturnType
 from ppotune.datatypes import PenalizedPPOStats, ExtendedTrajectory
 from ppotune.dist import DistributedPolicyMixture
 from ppotune.loss import KLPenalty
@@ -42,6 +42,7 @@ from ppotune.peft import (
     merge_lora_adapter,
     clear_lora_adapter,
 )
+from ppotune.reward import IRewardModel
 from ppotune.utils import grad_norm
 
 log = utils.get_logger("DEBUG")
@@ -58,8 +59,7 @@ class PPORecipe(FTRecipeInterface):
     <https://arxiv.org/abs/2204.05862`_.
 
     Features:
-        - Activation Checkpointing. This can be controlled using the ``activation_checkpointing``
-            flag. Activation checkpointing helps reduce the memory footprint since we no longer
+        - Activation Checkpointing helps reduce the memory footprint since we no longer
             keep activations in memory and instead recompute them during the backward pass. This is
             especially helpful for larger batch sizes when you're memory constrained. But these
             savings in memory come at the cost of training performance. In most cases training can
@@ -138,7 +138,7 @@ class PPORecipe(FTRecipeInterface):
 
         # save adapter configs for checkpointing
         self._policy_adapter_config = get_adapter_config(cfg.policy)
-        self._valmod_adpater_config = get_adapter_config(cfg.valmod)
+        self._scorer_adpater_config = get_adapter_config(cfg.scorer)
 
     def setup(self, cfg: DictConfig) -> None:
         """
@@ -150,54 +150,51 @@ class PPORecipe(FTRecipeInterface):
             self._metric_logger.log_config(cfg)
 
         # setup checkpointers
-        self._checkpointer: Checkpointer = config.instantiate(
-            cfg.checkpointer, resume_from_checkpoint=False,
+        self._policy_checkpointer = self._setup_checkpointer(
+            cfg.policy_checkpointer
         )
-        self._value_checkpointer: Checkpointer = config.instantiate(
-            cfg.value_checkpointer, resume_from_checkpoint=False,
+        self._scorer_checkpointer = self._setup_checkpointer(
+            cfg.scorer_checkpointer
         )
         # load checkpoints
-        policy_state_dict = self._checkpointer.load_checkpoint()
-        valmod_state_dict = self._value_checkpointer.load_checkpoint()
+        policy_state_dict = self._policy_checkpointer.load_checkpoint()
+        scorer_state_dict = self._scorer_checkpointer.load_checkpoint()
 
         # initialize models and load the state dict
-        self._policy, self._valmod = self._setup_models(
-            cfg_policy          = cfg.policy,
-            cfg_valmod          = cfg.valmod,
-            policy_state_dict   = policy_state_dict[training.MODEL_KEY],
-            valmod_state_dict   = valmod_state_dict[training.MODEL_KEY],
-            enable_activation_checkpointing = cfg.enable_activation_checkpointing,
+        self._policy = self._setup_lora_model(
+            cfg.policy,
+            policy_state_dict[training.MODEL_KEY]
         )
-
-        # initialize reference policy
-        self._ref_policy = DistributedPolicyMixture(self._policy, cfg.kl.self_attraction)
-
-        # instantiate tokenizer
-        self._tokenizer: ModelTokenizer = config.instantiate(cfg.tokenizer)
+        self._scorer = self._setup_lora_model(
+            cfg.scorer,
+            scorer_state_dict[training.MODEL_KEY]
+        )
 
         # instantiate optimizer
         self._optimizer: Optimizer = config.instantiate(cfg.optimizer, chain(
             self._policy.parameters(),
-            self._valmod.parameters()
+            self._scorer.parameters()
         ))
-
-        self.ae = PPOAdvatageModel(
-                scorer=self._valmod,
-                gamma=cfg.gamma,
-                lmbda=cfg.lmbda,
-                kl_coeff=cfg.kl.reward_coeff,
-                penalise_no_eos=cfg.penalise_no_eos,
-                reward_penalty=cfg.reward_penalty,
-                min_response_len=cfg.min_response_length,
-                max_response_len=cfg.max_generated_tokens,
+        # initialize reference policy
+        self._ref_policy: DistributedPolicyMixture = config.instantiate(
+            cfg.reference_model,
+            local_policy=self._policy
         )
+        # initialize reward model
+        self.rm: IRewardModel = config.instantiate(
+            cfg.reward_model,
+            scorer=self._scorer
+        )
+        # initialize advantage estimator
+        self.ae: IAdvantageModel = config.instantiate(
+            cfg.advantage_model,
+            scorer=self._scorer
+        )
+        # instantiate kl penalty module
+        self.kl: KLPenalty = config.instantiate(cfg.kl_penalty)
 
-        # instantiate loss
-        self._loss_fn = config.instantiate(cfg.loss)
-
-        # instantiate kl-penalty term
-        self._kl_penalty = KLPenalty(cfg.kl.direct_coeff)
-
+        # instantiate tokenizer
+        self._tokenizer: ModelTokenizer = config.instantiate(cfg.tokenizer)
         # setup sampler and dataloader
         self._sampler, self._dataloader = self._setup_data(
             cfg_dataset = cfg.dataset,
@@ -239,6 +236,24 @@ class PPORecipe(FTRecipeInterface):
         )
         return WandBLogger(**cfg_logger)
 
+    def _setup_checkpointer(
+        self,
+        ckpt_cfg: DictConfig
+    ) -> Checkpointer:
+        """
+        Sets up checkpointer
+        """
+        # set different output dir names for each agent
+        output_dir = ckpt_cfg.output_dir
+        output_dir = f"{output_dir}-{dist.get_rank()}/{dist.get_world_size() - 1}"
+
+        checkpointer: Checkpointer = config.instantiate(
+            ckpt_cfg,
+            resume_from_checkpoint=False,
+            output_dir=output_dir
+        )
+        return checkpointer
+
     def _setup_hyperparameters(self, cfg: DictConfig) -> None:
         """
         Sets up the training hyperparameters for the recipe. This includes the GAE hyperparameters,
@@ -248,6 +263,9 @@ class PPORecipe(FTRecipeInterface):
         self._temperature = cfg.temperature
         self._top_k = cfg.top_k
         self._max_generated_tokens = cfg.max_generated_tokens
+
+        # loss params
+        self._epsilon = cfg.epsilon
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
         """
@@ -316,48 +334,26 @@ class PPORecipe(FTRecipeInterface):
             log, f"Total steps to run: {self._total_steps}, Total epochs: {self._total_epochs}"
         )
 
-    def _setup_models(
+    def _setup_lora_model(
         self,
-        cfg_policy: DictConfig,
-        cfg_valmod: DictConfig,
-        policy_state_dict: Dict[str, Any],
-        valmod_state_dict: Dict[str, Any],
-        enable_activation_checkpointing: bool,
-        ) -> Tuple[TransformerDecoder, TransformerDecoder]:
+        model_cfg: DictConfig,
+        model_state_dict: Dict[str, Any]
+    ) -> TransformerDecoder:
         """
-        Sets up the policy/reference model and reward/value model.
+        Sets up a model
         """
+        # note: ensure put.bias is not in scorer state dict
         with training.set_default_dtype(self._dtype), self._device:
-            policy: nn.Module = config.instantiate(cfg_policy)
-            valmod: nn.Module = config.instantiate(cfg_valmod)
+            model: TransformerDecoder = config.instantiate(model_cfg)
+            set_trainable_params(model, get_adapter_params(model))
 
-            set_trainable_params(policy, get_adapter_params(policy))
-            set_trainable_params(valmod, get_adapter_params(valmod))
-
-        if enable_activation_checkpointing:
-            training.set_activation_checkpointing(
-                policy, auto_wrap_policy={modules.TransformerSelfAttentionLayer}
-            )
-            training.set_activation_checkpointing(
-                valmod, auto_wrap_policy={modules.TransformerSelfAttentionLayer}
-            )
-
-        # warning: strict=False mode allows undesirable state dict - model parameters mismatch.
-        # That may result in incorrect initialization but is set to load with no LoRAs predefined.
-        policy.load_state_dict(policy_state_dict, strict=False)
-
-        # since we should be loading a classifier checkpoint into
-        # a classifier model, this function should just ensure
-        # output.weight appears in the state_dict and the model's parameters,
-        # and removes output.bias from the state dict if found
-        training.update_state_dict_for_classifier(
-            valmod_state_dict, valmod.named_parameters()
+        training.set_activation_checkpointing(
+            model, auto_wrap_policy={modules.TransformerSelfAttentionLayer}
         )
-        # warning: strict=False mode allows undesirable state dict - model parameters mismatch that
-        # may result in incorrect initialization but is set to load with no LoRAs predefined.
-        valmod.load_state_dict(valmod_state_dict, strict=False)
-
-        return policy, valmod
+        # warning: strict=False allows not all model params to be initialized
+        # wich is dangerous but is necessary to load with no LoRAs predefined.
+        model.load_state_dict(model_state_dict, strict=False)
+        return model
 
     def _setup_data(
         self,
@@ -389,27 +385,6 @@ class PPORecipe(FTRecipeInterface):
             collate_fn=collator
         )
         return sampler, dataloader
-
-    def save_checkpoint(self, epoch: int) -> None:
-        """
-        Save state dict to file. Policy and value models are merged with their
-        adapters and saved. Adapters with corresponding configs are saved
-        separately as well.
-        """
-        self._checkpointer.save_checkpoint(
-            state_dict=get_merged_adapter_state_dict(
-                module=self._policy,
-                module_adapter_config=self._policy_adapter_config
-            ),
-            epoch=epoch
-        )
-        self._value_checkpointer.save_checkpoint(
-            state_dict=get_merged_adapter_state_dict(
-                module=self._valmod,
-                module_adapter_config=self._valmod_adpater_config
-            ),
-            epoch=epoch
-        )
 
     def generate_trajectory(self, input_ids: torch.Tensor) -> ExtendedTrajectory:
         """
@@ -447,7 +422,6 @@ class PPORecipe(FTRecipeInterface):
             )
 
         tokens_pad_mask = tokens != self._tokenizer.pad_id
-        queries_pad_mask = tokens_pad_mask[:, :query_len]
 
         responses = tokens[:, query_len:]
         # pad responses after eos token
@@ -482,31 +456,34 @@ class PPORecipe(FTRecipeInterface):
         ref_logprobs[responses_pad_mask] = 1.0
         del ref_logits
 
-        ae: PPOAdvantageModelResult = self.ae(
+        rr = self.rm(
             tokens,
             causal_mask,
             position_ids,
-            queries_pad_mask,
             responses_pad_mask,
             gen_logprobs,
             ref_logprobs
+        )
+        aa = self.ae(
+            rr.rewards,
+            tokens,
+            causal_mask,
+            position_ids,
+            responses_pad_mask,
         )
         return ExtendedTrajectory(
             query_responses=tokens,
             logprobs=gen_logprobs,
             ref_logprobs=ref_logprobs,
-            values=ae.values,
+            values=aa.values,
             masks=causal_mask,
             position_ids=position_ids,
             response_padding_masks=responses_pad_mask,
-            value_padding_masks=ae.value_pad_mask,
-            value_seq_idxs=ae.score_pos,
-            scores=ae.scores,
-            seq_lens=ae.score_pos,
-            kl=ae.kl,
-            kl_rewards=ae.kl_rewards,
-            advantages=ae.advantages,
-            returns=ae.returns
+            scores=rr.scores,
+            kl=rr.kl,
+            kl_rewards=rr.kl_rewards,
+            advantages=aa.advantages,
+            returns=aa.returns
         )
 
     def generate_trajectory_batched(self, input_ids: torch.Tensor) -> ExtendedTrajectory:
@@ -545,11 +522,10 @@ class PPORecipe(FTRecipeInterface):
 
             for _, batch in enumerate(self._dataloader):
                 batch = batch["tokens"].to(self._device)
-                _, context_length = batch.shape
 
                 # generate trajectories using:
-                # - the current policy (pi_theta)
-                # - the current value function (V_phi)
+                # - the current policy
+                # - the current value function
                 # - the reference model (pi_theta_0)
                 trajectory = self.generate_trajectory_batched(batch)
 
@@ -579,9 +555,8 @@ class PPORecipe(FTRecipeInterface):
                                 )
                             )
                             batch_ppo_stats.append(
-                                self._ppo_step(
-                                    batch_trajectory,
-                                    context_length,
+                                self.ppo_step(
+                                    batch_trajectory
                                 )
                             )
                             del batch_trajectory
@@ -590,7 +565,7 @@ class PPORecipe(FTRecipeInterface):
 
                         grad_logs = {
                             **self._collect_grad_norm("policy", self._policy),
-                            **self._collect_grad_norm("value", self._valmod)
+                            **self._collect_grad_norm("value", self._scorer)
                         }
 
                         self._optimizer.step()
@@ -622,21 +597,24 @@ class PPORecipe(FTRecipeInterface):
             self._epochs_run += 1
 
             if training_completed:
-                if dist.get_rank() == 0:
-                    self.save_checkpoint(curr_epoch)
+                self._policy_checkpointer.save_checkpoint(
+                    state_dict=get_merged_adapter_state_dict(
+                        module=self._policy,
+                        module_adapter_config=self._policy_adapter_config
+                    ),
+                    epoch=curr_epoch
+                )
                 return
 
-    def _ppo_step(
+    def ppo_step(
         self,
         trajectory: ExtendedTrajectory,
-        context_length: int,
     ) -> PenalizedPPOStats:
         """
         Perform a single PPO optimisation step over a batch of trajectories
 
         Args:
             trajectory (Trajectory): a batch of trajectories
-            context_length (int): input ids sequence length
 
         Returns:
             PenalizedPPOStats: An instance of :class:`ppotune.datatypes.PenalizedPPOStats`,
@@ -651,66 +629,67 @@ class PPORecipe(FTRecipeInterface):
                - kl_penalty (torch.Tensor): KL-Penalty
 
         """
+        queries_len = trajectory.query_responses.shape[1] - trajectory.response_padding_masks.shape[1]
         # estimate logprobs from the policy at the current optimisation step
-        pi_logits = self._policy(
-            trajectory.query_responses,
-            input_pos=trajectory.position_ids,
-            mask=trajectory.masks,
-        )
-        pi_logits = rlhf.truncate_sequence_for_logprobs(pi_logits, context_length)
-        pi_logprobs = rlhf.logits_to_logprobs(
-            pi_logits, trajectory.query_responses[:, context_length:], self._temperature
-        )
-        pi_logprobs[trajectory.response_padding_masks] = 1.0
-
-        del pi_logits
-
-        # estimate the values from the value function at the current optimisation step
-        phi_values = self._valmod(
+        logits = self._policy(
             trajectory.query_responses,
             input_pos=trajectory.position_ids,
             mask=trajectory.masks,
         )
 
-        phi_values = rlhf.truncate_sequence_for_logprobs(
-            phi_values, context_length
-        ).squeeze(-1)
-        phi_values[trajectory.value_padding_masks] = 0.0
+        logits = logits[:, queries_len - 1 : -1]
+        logprobs = rlhf.logits_to_logprobs(
+            logits, trajectory.query_responses[:, queries_len:], self._temperature
+        )
+        logprobs[trajectory.response_padding_masks] = 1.0
 
-        # calculate ppo loss
-        loss, policy_loss, value_loss, ratios, clipfrac = self._loss_fn(
-            trajectory.logprobs,
-            pi_logprobs,
-            trajectory.advantages,
+        del logits
+
+        ratios = torch.exp(logprobs - trajectory.logprobs)
+        clipped_ratios = torch.clamp(ratios, 1.0 - self._epsilon, 1.0 + self._epsilon)
+
+        policy_losses_clipped = -trajectory.advantages * clipped_ratios
+        policy_losses_unclipped = -trajectory.advantages * ratios
+
+        clipfrac = (policy_losses_clipped > policy_losses_unclipped).to(
+            logprobs.dtype
+        )
+        clipfrac = rlhf.masked_mean(clipfrac, ~trajectory.response_padding_masks)
+
+        policy_loss = torch.maximum(policy_losses_clipped, policy_losses_unclipped)
+        policy_loss = rlhf.masked_mean(policy_loss, ~trajectory.response_padding_masks)
+
+        value_loss = self.ae.loss(
+            trajectory.query_responses,
+            trajectory.masks,
+            trajectory.position_ids,
+            trajectory.response_padding_masks,
             trajectory.values,
-            phi_values,
-            trajectory.returns,
-            padding_masks=~trajectory.response_padding_masks,
-            value_padding_masks=~trajectory.value_padding_masks,
+            trajectory.returns
         )
-        # calculate DeepSeek style penalty i.e. coeff * KL[policy||reference]
-        kl_penalty = self._kl_penalty(
-            pi_logprobs,
+        kl_penalty = self.kl(
+            logprobs,
             trajectory.ref_logprobs,
-            padding_masks=~trajectory.response_padding_masks,
+            padding_masks=~trajectory.response_padding_masks
         )
-        penalized_loss = loss + kl_penalty
-        penalized_loss /= self._gradient_accumulation_steps
-        penalized_loss.backward()
+
+        loss = policy_loss + value_loss + kl_penalty
+        loss /= self._gradient_accumulation_steps
+        loss.backward()
 
         with torch.no_grad():
             approx_policy_kls = (
-                0.5 * (pi_logprobs - trajectory.logprobs).pow(2)
+                0.5 * (logprobs - trajectory.logprobs).pow(2)
             ).mean()
 
         return PenalizedPPOStats(
-            loss / self._gradient_accumulation_steps,
-            policy_loss / self._gradient_accumulation_steps,
-            value_loss / self._gradient_accumulation_steps,
-            ratios / self._gradient_accumulation_steps,
-            clipfrac / self._gradient_accumulation_steps,
+            loss.detach(),
+            policy_loss.detach() / self._gradient_accumulation_steps,
+            value_loss.detach() / self.ae.value_coeff / self._gradient_accumulation_steps,
+            ratios.mean().detach() / self._gradient_accumulation_steps,
+            clipfrac.detach() / self._gradient_accumulation_steps,
             approx_policy_kls / self._gradient_accumulation_steps,
-            kl_penalty / self._gradient_accumulation_steps,
+            kl_penalty.detach() / self._gradient_accumulation_steps,
         )
 
     def _collect_grad_norm(self, name: str, module: nn.Module) -> dict[str, torch.Tensor]:
@@ -743,7 +722,7 @@ class PPORecipe(FTRecipeInterface):
             "clipfrac": ppo_stats.clipfrac.mean(),
             "ratios": ppo_stats.ratios.mean(),
             "approx_policy_kl": ppo_stats.approx_policy_kls.mean(),
-            "response_lengths": trajectory.seq_lens.float().mean(),
+            "response_lengths": training.get_unmasked_sequence_lengths(trajectory.response_padding_masks).float().mean(),
             **kwargs
         }
 
