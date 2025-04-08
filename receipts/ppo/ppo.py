@@ -465,10 +465,6 @@ class PPORecipe(FTRecipeInterface):
                             self.ppo_step(batch_trajectory)
                             del batch_trajectory
 
-                        wandb_logger.collect_dict({
-                            **self._collect_grad_norm("policy", self.policy),
-                            **self._collect_grad_norm("value", self.advantage)
-                        })
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
 
@@ -558,6 +554,8 @@ class PPORecipe(FTRecipeInterface):
             "ratios": ratios.mean(),
             "clipfrac": clipfrac,
             "approx_policy_kl": approx_policy_kls,
+            **self._collect_grad_norm("policy", self.policy),
+            **self._collect_grad_norm("value", self.advantage)
         })
 
     def _collect_grad_norm(self, name: str, module: nn.Module) -> dict[str, torch.Tensor]:
