@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from omegaconf import DictConfig
 from typing import Iterator, Tuple
 
+from typing import Any
+
 from torchtune.modules.peft import disable_adapter
 from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.training import get_unmasked_sequence_lengths
@@ -20,10 +22,23 @@ from xml.etree import ElementTree
 
 logger = WandbLogger()
 
+def liststrip(lst: list, element: Any) -> list:
+    start = 0
+    while start < len(lst) and lst[start] == element:
+        start += 1
+
+    end = len(lst)
+    while end > start and lst[end - 1] == element:
+        end -= 1
+
+    return lst[start:end]
+
+
 class IRewardModel(ABC):
     """
     Abstract Reward Model Interface
     """
+
     @abstractmethod
     def __call__(
         self,
@@ -188,7 +203,9 @@ class DeepSeekMathRewardModel(IRewardModel):
 
         batch_size = tokens.shape[0]
         queries_len = tokens.shape[1] - responses_pad_mask.shape[1]
-        response_tokens = tokens[:, queries_len:]
+        query_tokens = tokens[:, :queries_len]
+        response_tokens = tokens[:, queries_len:].clone()
+        response_tokens[responses_pad_mask] = self.tokenizer.pad_id
 
         scores = torch.zeros_like(tokens[:,0], dtype=torch.float32)
         successes = torch.zeros_like(tokens[:,0], dtype=torch.float32)
@@ -200,7 +217,10 @@ class DeepSeekMathRewardModel(IRewardModel):
                 answer=answer, completion=response
             )
 
-        self.log_samples(tokens, scores, successes, batch["answers"])
+        self.log_samples(
+            torch.cat([query_tokens, response_tokens], dim=1),
+            scores, successes, batch["answers"]
+        )
         logger.collect_dict({
             "success_rate": successes,
             "scores": scores
@@ -217,7 +237,7 @@ class DeepSeekMathRewardModel(IRewardModel):
 
         samples = [
             self.tokenizer.decode(
-                tokens[i].tolist(),
+                liststrip(tokens[i].tolist(), self.tokenizer.pad_id),
                 skip_special_tokens=False,
                 truncate_at_eos=False
             )
