@@ -32,7 +32,6 @@ class WandbLogger(MetricLoggerInterface):
             os.makedirs(config.dir)
 
         self._log_buffer: tp.Dict[str, list[torch.Tensor]] = {}
-
         self._completions = wandb.Table(
             columns=["completion", "score"]
         )
@@ -57,12 +56,6 @@ class WandbLogger(MetricLoggerInterface):
     def log_config(self, config: DictConfig) -> None:
         resolved = OmegaConf.to_container(config, resolve=True)
         wandb.config.update(resolved)
-
-    def log_table(
-        self, name: str, columns: list[str], data: list[list[str]]
-    ) -> None:
-        table = wandb.Table(columns=columns, data=data)
-        wandb.log({name: table})
 
     def collect(self, name: str, data: torch.Tensor) -> None:
         """
