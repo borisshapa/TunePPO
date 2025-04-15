@@ -33,13 +33,13 @@
 
 # Change those to your preference. Do not do that via CLI!
 # prefix: /home/optteam/.torchtune
-prefix: /home/arqa39/.torchtune
+prefix: /home/optteam/.tune
 
 project: TLDR
-group: Base-PPO-Refactored
+group: Base-PPO-Advantage-Refactored
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: Mistral-7B-RM
-run: PPO-Logger-Refactored
+run: PPO
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
@@ -70,19 +70,7 @@ policy:
   lora_dropout: 0.0
   quantize_base: False # stands for 'Q' in QLoRA
 
-# Value Model / Reward Model when adapter disabled
-scorer:
-  _component_: torchtune.models.mistral.lora_mistral_reward_7b
-  # (Q)LoRA
-  lora_attn_modules: ['q_proj', 'k_proj', 'v_proj', 'output_proj']
-  apply_lora_to_mlp: True
-  apply_lora_to_output: = True
-  lora_rank: 16
-  lora_alpha: 32
-  lora_dropout: 0.0
-  quantize_base: False
-
-# main checkpointer is for the policy model
+# checkpointer for the policy model
 policy_checkpointer:
   _component_: torchtune.training.FullModelHFCheckpointer
   checkpoint_dir: ${prefix}/models/${model}/
@@ -97,18 +85,47 @@ policy_checkpointer:
   output_dir: ${output_dir}/policy
   model_type: MISTRAL
 
-# checkpointer for the value model initialized with the reward model weights
-scorer_checkpointer:
-  _component_: torchtune.training.FullModelHFCheckpointer
-  checkpoint_dir: ${prefix}/models/${reward}/
-  checkpoint_files:
-    [
-      "model-00001-of-00003.safetensors",
-      "model-00002-of-00003.safetensors",
-      "model-00003-of-00003.safetensors",
-    ]
-  output_dir: ${output_dir}/value
-  model_type: REWARD
+
+advantage:
+  _component_: ppotune.advantage.GAE
+
+  gamma: 1
+  lmbda: 0.95
+  value_coeff: 0.1
+  value_clip_range: 0.2
+  rm:
+    _component_: ppotune.reward.PerTokenKLPenalizedRewardModel
+
+    min_response_len: 18      # would penalize generations shorter than
+    penalise_no_eos: True     # would penalize generations with no eos
+    reward_penalty: -3        # penalty value
+    kl_coeff: 0.01            # per token kl-penalty coefficient
+    scorer:
+      _component_: ppotune.model.LoRAModel
+
+      ckpt:
+        _component_: torchtune.training.FullModelHFCheckpointer
+        checkpoint_dir: ${prefix}/models/${reward}/
+        checkpoint_files:
+          [
+            "model-00001-of-00003.safetensors",
+            "model-00002-of-00003.safetensors",
+            "model-00003-of-00003.safetensors",
+          ]
+        output_dir: ${output_dir}/scorer
+        model_type: REWARD
+
+      model:
+        _component_: torchtune.models.mistral.lora_mistral_reward_7b
+        # (Q)LoRA
+        lora_attn_modules: ['q_proj', 'k_proj', 'v_proj', 'output_proj']
+        apply_lora_to_mlp: True
+        apply_lora_to_output: = True
+        lora_rank: 16
+        lora_alpha: 32
+        lora_dropout: 0.0
+        quantize_base: False
+
 
 seed: 0xD1CE
 shuffle: True
@@ -136,20 +153,6 @@ top_k: null
 
 sampler:
   _component_: torch.utils.data.DistributedSampler
-
-reward_model:
-  _component_: ppotune.reward.PerTokenKLPenalizedRewardModel
-  min_response_len: 18   # would penalize generations shorter than
-  penalise_no_eos: True     # would penalize generations with no eos
-  reward_penalty: -3        # penalty value
-  kl_coeff: 0.01            # per token kl-penalty coefficient
-
-advantage_model:
-  _component_: ppotune.advantage.LLMCriticGAE
-  gamma: 1
-  lmbda: 0.95
-  value_coeff: 0.1
-  value_clip_range: 0.2
 
 kl_penalty:
   _component_: ppotune.loss.KLPenalty

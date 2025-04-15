@@ -9,6 +9,7 @@ class AdvantageTrajectoryStats(tp.NamedTuple):
     advantages: torch.Tensor
     values: torch.Tensor
     returns: torch.Tensor
+    rewards: torch.Tensor
 
 
 class PPOTrajectoryStats(tp.NamedTuple):

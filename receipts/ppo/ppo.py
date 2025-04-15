@@ -25,13 +25,14 @@ from torchtune.modules.peft import (
     get_adapter_params,
     set_trainable_params,
 )
-from torchtune.modules.tokenizers import ModelTokenizer
+from torchtune.modules.transforms.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.training.checkpointing import Checkpointer
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
 from ppotune.advantage import IAdvantageModel
+from ppotune.config import nested_instantiate
 from ppotune.datatypes import (
     PPOTrajectoryStats,
     AdvantageTrajectoryStats,
@@ -45,7 +46,6 @@ from ppotune.peft import (
     merge_lora_adapter,
     clear_lora_adapter,
 )
-from ppotune.reward import IRewardModel
 from ppotune.utils import grad_norm
 
 log = utils.get_logger("DEBUG")
@@ -141,7 +141,6 @@ class PPORecipe(FTRecipeInterface):
 
         # save adapter configs for checkpointing
         self._policy_adapter_config = get_adapter_config(cfg.policy)
-        self._scorer_adpater_config = get_adapter_config(cfg.scorer)
 
     def setup(self, cfg: DictConfig) -> None:
         """
@@ -151,46 +150,32 @@ class PPORecipe(FTRecipeInterface):
         wandb_logger.setup(cfg.wandb_logger)
         wandb_logger.log_config(cfg)
 
-        # setup checkpointers
+        with training.set_default_dtype(self._dtype), self._device:
+            self.am: IAdvantageModel = nested_instantiate(cfg.advantage)
+            self.am.setup()
+
+        # setup checkpointer
         self._policy_checkpointer = self._setup_checkpointer(
             cfg.policy_checkpointer
         )
-        self._scorer_checkpointer = self._setup_checkpointer(
-            cfg.scorer_checkpointer
-        )
-        # load checkpoints
+        # load checkpoint
         policy_state_dict = self._policy_checkpointer.load_checkpoint()
-        scorer_state_dict = self._scorer_checkpointer.load_checkpoint()
 
-        # initialize models and load the state dict
+        # initialize policy and load the state dict
         self._policy = self._setup_lora_model(
             cfg.policy,
             policy_state_dict[training.MODEL_KEY]
-        )
-        self._scorer = self._setup_lora_model(
-            cfg.scorer,
-            scorer_state_dict[training.MODEL_KEY]
         )
 
         # instantiate optimizer
         self._optimizer: Optimizer = config.instantiate(cfg.optimizer, chain(
             self._policy.parameters(),
-            self._scorer.parameters()
+            self.am.parameters()
         ))
         # initialize reference policy
         self._ref_policy: DistributedPolicyMixture = config.instantiate(
             cfg.reference_model,
             local_policy=self._policy
-        )
-        # initialize reward model
-        self.rm: IRewardModel = config.instantiate(
-            cfg.reward_model,
-            scorer=self._scorer
-        )
-        # initialize advantage estimator
-        self.ae: IAdvantageModel = config.instantiate(
-            cfg.advantage_model,
-            scorer=self._scorer
         )
         # instantiate kl penalty module
         self.kl: KLPenalty = config.instantiate(cfg.kl_penalty)
@@ -456,20 +441,13 @@ class PPORecipe(FTRecipeInterface):
         ref_logprobs[responses_pad_mask] = 1.0
         del ref_logits
 
-        rewards = self.rm(
-            tokens,
-            causal_mask,
-            position_ids,
-            responses_pad_mask,
-            gen_logprobs=gen_logprobs,
-            ref_logprobs=ref_logprobs
-        )
-        ae_trajectory: AdvantageTrajectoryStats = self.ae(
-            rewards     = rewards,
+        am_trajectory: AdvantageTrajectoryStats = self.am(
             tokens          = tokens,
             causal_mask     = causal_mask,
             position_ids    = position_ids,
             responses_pad_mask  = responses_pad_mask,
+            gen_logprobs = gen_logprobs,
+            ref_logprobs = ref_logprobs
         )
         return PPOTrajectoryStats(
             query_responses     = tokens,
@@ -478,9 +456,9 @@ class PPORecipe(FTRecipeInterface):
             responses_pad_mask  = responses_pad_mask,
             gen_logprobs        = gen_logprobs,
             ref_logprobs        = ref_logprobs,
-            values              = ae_trajectory.values,
-            returns             = ae_trajectory.returns,
-            advantages          = ae_trajectory.advantages,
+            values              = am_trajectory.values,
+            returns             = am_trajectory.returns,
+            advantages          = am_trajectory.advantages,
         )
 
     def generate_trajectory_batched(self, input_ids: torch.Tensor) -> PPOTrajectoryStats:
@@ -560,7 +538,7 @@ class PPORecipe(FTRecipeInterface):
 
                         wandb_logger.collect_dict({
                             **self._collect_grad_norm("policy", self._policy),
-                            **self._collect_grad_norm("value", self._scorer)
+                            **self._collect_grad_norm("value", self.am)
                         })
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
@@ -628,7 +606,7 @@ class PPORecipe(FTRecipeInterface):
         policy_loss = torch.maximum(policy_losses_clipped, policy_losses_unclipped)
         policy_loss = rlhf.masked_mean(policy_loss, ~trajectory.responses_pad_mask)
 
-        value_loss = self.ae.loss(
+        value_loss = self.am.loss(
             tokens=trajectory.query_responses,
             causal_mask=trajectory.causal_mask,
             position_ids=trajectory.position_ids,
