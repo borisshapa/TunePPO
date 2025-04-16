@@ -24,7 +24,7 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-prefix: /home/evgurovv/torchtune
+prefix: /home/optteam/.tune
 
 project: TLDR
 group: Llama-SmallSFT-PPO
