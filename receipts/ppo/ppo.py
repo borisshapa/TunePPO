@@ -26,7 +26,6 @@ from torchtune.modules.transforms.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
-
 from ppotune.advantage import IAdvantageModel
 from ppotune.config import nested_instantiate
 from ppotune.datatypes import (
@@ -41,7 +40,7 @@ from ppotune.peft import (
     merge_lora_adapter,
     clear_lora_adapter,
 )
-from ppotune.utils import grad_norm
+from ppotune.utils import grad_norm, pretty_decode
 
 log = utils.get_logger("DEBUG")
 wandb_logger = WandbLogger()
@@ -367,6 +366,12 @@ class PPORecipe(FTRecipeInterface):
             responses_pad_mask  = responses_pad_mask,
             gen_logprobs = gen_logprobs,
             ref_logprobs = ref_logprobs
+        )
+        sample_completion = pretty_decode(
+            self._tokenizer, tokens[0].clone(), responses_pad_mask[0]
+        )
+        wandb_logger.collect_completion(
+            sample_completion, advantage_trajectory.rewards[0].sum()
         )
         return PPOTrajectoryStats(
             query_responses     = tokens,
