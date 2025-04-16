@@ -271,7 +271,7 @@ class PPORecipe(FTRecipeInterface):
         self,
         cfg_dataset: DictConfig,
         cfg_sampler: DictConfig,
-        tokenizer: PreTrainedTokenizerBase,
+        tokenizer: ModelTokenizer | PreTrainedTokenizerBase,
         batch_size: int,
         shuffle: bool,
     ) -> Tuple[Sampler, DataLoader]:
