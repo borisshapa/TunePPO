@@ -36,18 +36,18 @@ output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
 # Tokenizer
 tokenizer:
-  _component_: torchtune.models.llama3.llama3_tokenizer
-  path: ${prefix}/models/Llama-3.1-8B-Base/original/tokenizer.model
+  _component_: ppotune.tokenizers.hf_tokenizer
+  path: ${prefix}/models/${model}/
+  pad_token: <|finetune_right_pad_id|>
   max_seq_len: 2500
 
 # Dataset
 dataset:
-  _component_: torchtune.datasets.text_completion_dataset
+  _component_: ppotune.datasets.text_completion_dataset
   source: RLHF-And-Friends/tldr-ppo
   # source: trl-lib/tldr
   split: train
   column: prompt
-  add_eos: False
 
 # Batch parameters
 batch_size: 64

@@ -17,6 +17,9 @@ from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import Sampler
+
+from transformers import PreTrainedTokenizerBase
+
 from torchtune import config, generation, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.modules.peft import (
@@ -144,7 +147,10 @@ class PPORecipe(FTRecipeInterface):
         wandb_logger.log_config(cfg)
 
         # instantiate tokenizer
-        self._tokenizer: ModelTokenizer = config.instantiate(cfg.tokenizer)
+        self._tokenizer: PreTrainedTokenizerBase | ModelTokenizer = config.instantiate(
+            cfg.tokenizer
+        )
+
         # setup sampler and dataloader
         self._sampler, self._dataloader = self._setup_data(
             cfg_dataset = cfg.dataset,
@@ -265,7 +271,7 @@ class PPORecipe(FTRecipeInterface):
         self,
         cfg_dataset: DictConfig,
         cfg_sampler: DictConfig,
-        tokenizer: ModelTokenizer,
+        tokenizer: ModelTokenizer | PreTrainedTokenizerBase,
         batch_size: int,
         shuffle: bool,
     ) -> Tuple[Sampler, DataLoader]:
@@ -285,7 +291,7 @@ class PPORecipe(FTRecipeInterface):
         collator = partial(
             padded_collate,
             pad_direction="left",
-            keys_to_pad=["tokens", "labels"],
+            keys_to_pad=["tokens"],
             padding_idx=tokenizer.pad_id,
         )
         dataloader = DataLoader(
