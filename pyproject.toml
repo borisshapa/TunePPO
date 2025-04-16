@@ -11,11 +11,10 @@ dependencies = [
 	"torch",
 	"torchvision",
 	"torchao",
-	"torchtune",
-
+	# torchtune itself
+	"torchtune==0.6.1",
 	# huggingface framework family
 	"bitsandbytes",
-
 	# logging
 	"wandb",
 ]
