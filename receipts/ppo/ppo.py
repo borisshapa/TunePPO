@@ -6,7 +6,7 @@ import sys
 
 from functools import partial
 from itertools import chain
-from typing import Any, Dict, List, Tuple
+from typing import List, Tuple
 from warnings import warn
 
 import torch
@@ -17,23 +17,18 @@ from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import Sampler
-
-from transformers import AutoTokenizer, PreTrainedTokenizerBase
-
-from torchtune import config, generation, modules, rlhf, training, utils
+from torchtune import config, generation, rlhf, training, utils
 from torchtune.data import padded_collate
-from torchtune.modules import TransformerDecoder, local_kv_cache
 from torchtune.modules.peft import (
     disable_adapter,
-    get_adapter_params,
-    set_trainable_params,
 )
+from torchtune.modules.transforms.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
-from torchtune.training.checkpointing import Checkpointer
 from torchtune.utils import log_rank_zero
 from tqdm import tqdm
 
 from ppotune.advantage import IAdvantageModel
+from ppotune.config import nested_instantiate
 from ppotune.datatypes import (
     PPOTrajectoryStats,
     AdvantageTrajectoryStats,
@@ -41,13 +36,11 @@ from ppotune.datatypes import (
 from ppotune.dist import DistributedPolicyMixture
 from ppotune.loss import KLPenalty
 from ppotune.log import WandbLogger
+from ppotune.model import GenerativeLoRAModel
 from ppotune.peft import (
-    get_adapter_config,
-    get_merged_adapter_state_dict,
     merge_lora_adapter,
     clear_lora_adapter,
 )
-from ppotune.reward import IRewardModel
 from ppotune.utils import grad_norm
 
 log = utils.get_logger("DEBUG")
@@ -115,7 +108,6 @@ class PPORecipe(FTRecipeInterface):
         cfg (DictConfig): OmegaConf object parsed from yaml file
 
     """
-
     def __init__(self, cfg: DictConfig) -> None:
         """
         Initialize basic things.
@@ -141,9 +133,8 @@ class PPORecipe(FTRecipeInterface):
         # reference policy update schedule
         self._update_ref_policy_every_n_steps = cfg.get("update_ref_policy_every_n_steps", 1)
 
-        # save adapter configs for checkpointing
-        self._policy_adapter_config = get_adapter_config(cfg.policy)
-        self._scorer_adpater_config = get_adapter_config(cfg.scorer)
+        # ppo loss epsilon
+        self._epsilon = cfg.epsilon
 
     def setup(self, cfg: DictConfig) -> None:
         """
@@ -152,50 +143,6 @@ class PPORecipe(FTRecipeInterface):
         # setup logger
         wandb_logger.setup(cfg.wandb_logger)
         wandb_logger.log_config(cfg)
-
-        # setup checkpointers
-        self._policy_checkpointer = self._setup_checkpointer(
-            cfg.policy_checkpointer
-        )
-        self._scorer_checkpointer = self._setup_checkpointer(
-            cfg.scorer_checkpointer
-        )
-        # load checkpoints
-        policy_state_dict = self._policy_checkpointer.load_checkpoint()
-        scorer_state_dict = self._scorer_checkpointer.load_checkpoint()
-
-        # initialize models and load the state dict
-        self._policy = self._setup_lora_model(
-            cfg.policy,
-            policy_state_dict[training.MODEL_KEY]
-        )
-        self._scorer = self._setup_lora_model(
-            cfg.scorer,
-            scorer_state_dict[training.MODEL_KEY]
-        )
-
-        # instantiate optimizer
-        self._optimizer: Optimizer = config.instantiate(cfg.optimizer, chain(
-            self._policy.parameters(),
-            self._scorer.parameters()
-        ))
-        # initialize reference policy
-        self._ref_policy: DistributedPolicyMixture = config.instantiate(
-            cfg.reference_model,
-            local_policy=self._policy
-        )
-        # initialize reward model
-        self.rm: IRewardModel = config.instantiate(
-            cfg.reward_model,
-            scorer=self._scorer
-        )
-        # initialize advantage estimator
-        self.ae: IAdvantageModel = config.instantiate(
-            cfg.advantage_model,
-            scorer=self._scorer
-        )
-        # instantiate kl penalty module
-        self.kl: KLPenalty = config.instantiate(cfg.kl_penalty)
 
         # instantiate tokenizer
         self._tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
@@ -210,48 +157,32 @@ class PPORecipe(FTRecipeInterface):
             shuffle     = cfg.shuffle,
             batch_size  = cfg.batch_size,
         )
-        # set other parameters
         self._setup_batch_sizes(cfg)
-        self._setup_hyperparameters(cfg)
+        # under chosen dtype on local device
+        with training.set_default_dtype(self._dtype), self._device:
+            self.policy: GenerativeLoRAModel = nested_instantiate(
+                cfg.policy,
+                pad_id=self._tokenizer.pad_id,
+                rng=self._rng
+            )
+            self.advantage: IAdvantageModel = nested_instantiate(cfg.advantage)
 
-        # setup a KV-caching context manager for trajectory generation
-        self.cache_ctx_manager = lambda: local_kv_cache(
-            self._policy,
-            batch_size=self._forward_batch_size,
-            dtype=self._dtype,
-            decoder_max_seq_len=self._tokenizer.max_seq_len + self._max_generated_tokens,
-            device=self._device,
+        self.policy.setup(cfg.policy)
+        self.advantage.setup(cfg.advantage)
+
+        # instantiate optimizer
+        self._optimizer: Optimizer = config.instantiate(
+            cfg.optimizer, chain(
+                self.policy.parameters(),
+                self.advantage.parameters()
+        ))
+        # initialize reference policy
+        self._ref_policy: DistributedPolicyMixture = config.instantiate(
+            cfg.reference_model,
+            local_policy=self.policy
         )
-
-    def _setup_checkpointer(
-        self,
-        ckpt_cfg: DictConfig
-    ) -> Checkpointer:
-        """
-        Sets up checkpointer.
-        """
-        # set different output dir names for each agent
-        output_dir = ckpt_cfg.output_dir
-        output_dir = f"{output_dir}-{dist.get_rank()}-of-{dist.get_world_size() - 1}"
-
-        checkpointer: Checkpointer = config.instantiate(
-            ckpt_cfg,
-            resume_from_checkpoint=False,
-            output_dir=output_dir
-        )
-        return checkpointer
-
-    def _setup_hyperparameters(self, cfg: DictConfig) -> None:
-        """
-        Sets up some training hyperparameters that have not been wrapped up into some module yet.
-        """
-        # trajectory generation args
-        self._temperature = cfg.temperature
-        self._top_k = cfg.top_k
-        self._max_generated_tokens = cfg.max_generated_tokens
-
-        # loss params
-        self._epsilon = cfg.epsilon
+        # instantiate kl penalty module
+        self.kl: KLPenalty = config.instantiate(cfg.kl_penalty)
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
         """
@@ -334,27 +265,6 @@ class PPORecipe(FTRecipeInterface):
             log, f"Total steps to run: {self._total_steps}, Total epochs: {self._total_epochs}"
         )
 
-    def _setup_lora_model(
-        self,
-        model_cfg: DictConfig,
-        model_state_dict: Dict[str, Any]
-    ) -> TransformerDecoder:
-        """
-        Sets up a LoRA model.
-        """
-        # note: ensure put.bias is not in scorer state dict
-        with training.set_default_dtype(self._dtype), self._device:
-            model: TransformerDecoder = config.instantiate(model_cfg)
-            set_trainable_params(model, get_adapter_params(model))
-
-        training.set_activation_checkpointing(
-            model, auto_wrap_policy={modules.TransformerSelfAttentionLayer}
-        )
-        # warning: strict=False allows not all model params to be initialized
-        # wich is dangerous but is necessary to load with no LoRAs predefined.
-        model.load_state_dict(model_state_dict, strict=False)
-        return model
-
     def _setup_data(
         self,
         cfg_dataset: DictConfig,
@@ -391,6 +301,7 @@ class PPORecipe(FTRecipeInterface):
         )
         return sampler, dataloader
 
+    @torch.no_grad()
     def generate_trajectory(self, input_ids: torch.Tensor) -> PPOTrajectoryStats:
         """
         Generates a trajectory given the current policy and value models, the reference policy
@@ -415,16 +326,7 @@ class PPORecipe(FTRecipeInterface):
         query_len = input_ids.shape[1]
 
         # generate responses and logits
-        with self.cache_ctx_manager():
-            tokens, logits = generation.generate(
-                model=self._policy,
-                prompt=input_ids,
-                max_generated_tokens=self._max_generated_tokens,
-                temperature=self._temperature,
-                top_k=self._top_k,
-                pad_id=self._tokenizer.pad_token_id,
-                rng=self._rng,
-            )
+        tokens, logits = self.policy.generate(prompt=input_ids)
 
         tokens_pad_mask = tokens != self._tokenizer.pad_token_id
 
@@ -443,7 +345,7 @@ class PPORecipe(FTRecipeInterface):
         )
 
         # generate reference logits
-        with disable_adapter(self._policy):
+        with disable_adapter(self.policy):
             ref_logits = self._ref_policy(
                 tokens,
                 input_pos=position_ids,
@@ -452,29 +354,22 @@ class PPORecipe(FTRecipeInterface):
         ref_logits = ref_logits[:, query_len - 1 : -1]
 
         # estimate logprobs of the responses w.r.t. generation policy
-        gen_logprobs = rlhf.logits_to_logprobs(logits, responses, self._temperature)
+        gen_logprobs = rlhf.logits_to_logprobs(logits, responses, self.policy._temperature)
         gen_logprobs[responses_pad_mask] = 1.0
         del logits
 
         # estimate logprobs of the responses w.r.t. reference policy
-        ref_logprobs = rlhf.logits_to_logprobs(ref_logits, responses, self._temperature)
+        ref_logprobs = rlhf.logits_to_logprobs(ref_logits, responses, self.policy._temperature)
         ref_logprobs[responses_pad_mask] = 1.0
         del ref_logits
 
-        rewards = self.rm(
-            tokens,
-            causal_mask,
-            position_ids,
-            responses_pad_mask,
-            gen_logprobs=gen_logprobs,
-            ref_logprobs=ref_logprobs
-        )
-        ae_trajectory: AdvantageTrajectoryStats = self.ae(
-            rewards     = rewards,
+        advantage_trajectory: AdvantageTrajectoryStats = self.advantage(
             tokens          = tokens,
             causal_mask     = causal_mask,
             position_ids    = position_ids,
             responses_pad_mask  = responses_pad_mask,
+            gen_logprobs = gen_logprobs,
+            ref_logprobs = ref_logprobs
         )
         return PPOTrajectoryStats(
             query_responses     = tokens,
@@ -483,9 +378,9 @@ class PPORecipe(FTRecipeInterface):
             responses_pad_mask  = responses_pad_mask,
             gen_logprobs        = gen_logprobs,
             ref_logprobs        = ref_logprobs,
-            values              = ae_trajectory.values,
-            returns             = ae_trajectory.returns,
-            advantages          = ae_trajectory.advantages,
+            values              = advantage_trajectory.values,
+            returns             = advantage_trajectory.returns,
+            advantages          = advantage_trajectory.advantages,
         )
 
     def generate_trajectory_batched(self, input_ids: torch.Tensor) -> PPOTrajectoryStats:
@@ -501,12 +396,11 @@ class PPORecipe(FTRecipeInterface):
                 comprising the current trajectory.
         """
         trajectories: List[PPOTrajectoryStats] = []
-        with torch.no_grad():
-            for batch_start in range(0, self.batch_size, self._forward_batch_size):
-                batch_input_ids = input_ids[
-                    batch_start : batch_start + self._forward_batch_size
-                ]
-                trajectories.append(self.generate_trajectory(batch_input_ids))
+        for batch_start in range(0, self.batch_size, self._forward_batch_size):
+            batch_input_ids = input_ids[
+                batch_start : batch_start + self._forward_batch_size
+            ]
+            trajectories.append(self.generate_trajectory(batch_input_ids))
         return PPOTrajectoryStats(*map(torch.cat, zip(*trajectories)))
 
     def train(self) -> None:
@@ -564,8 +458,8 @@ class PPORecipe(FTRecipeInterface):
                             del batch_trajectory
 
                         wandb_logger.collect_dict({
-                            **self._collect_grad_norm("policy", self._policy),
-                            **self._collect_grad_norm("value", self._scorer)
+                            **self._collect_grad_norm("policy", self.policy),
+                            **self._collect_grad_norm("value", self.advantage)
                         })
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
@@ -579,8 +473,8 @@ class PPORecipe(FTRecipeInterface):
 
                 if self._steps_run % self._update_ref_policy_every_n_steps == 0:
                     # effectively update reference policy.
-                    merge_lora_adapter(self._policy)
-                    clear_lora_adapter(self._policy)
+                    merge_lora_adapter(self.policy)
+                    clear_lora_adapter(self.policy)
 
                 pbar.update(1)
                 if self._steps_run == self._total_steps:
@@ -590,13 +484,7 @@ class PPORecipe(FTRecipeInterface):
             self._epochs_run += 1
 
             if training_completed:
-                self._policy_checkpointer.save_checkpoint(
-                    state_dict=get_merged_adapter_state_dict(
-                        module=self._policy,
-                        module_adapter_config=self._policy_adapter_config
-                    ),
-                    epoch=curr_epoch
-                )
+                self.policy.save_checkpoint()
                 return
 
     def ppo_step(self, trajectory: PPOTrajectoryStats) -> None:
@@ -605,7 +493,7 @@ class PPORecipe(FTRecipeInterface):
         """
         queries_len = trajectory.query_responses.shape[1] - trajectory.responses_pad_mask.shape[1]
         # estimate logprobs from the policy at the current optimisation step
-        logits = self._policy(
+        logits = self.policy(
             trajectory.query_responses,
             input_pos=trajectory.position_ids,
             mask=trajectory.causal_mask,
@@ -613,7 +501,7 @@ class PPORecipe(FTRecipeInterface):
 
         logits = logits[:, queries_len - 1 : -1]
         logprobs = rlhf.logits_to_logprobs(
-            logits, trajectory.query_responses[:, queries_len:], self._temperature
+            logits, trajectory.query_responses[:, queries_len:], self.policy._temperature
         )
         logprobs[trajectory.responses_pad_mask] = 1.0
 
@@ -633,7 +521,7 @@ class PPORecipe(FTRecipeInterface):
         policy_loss = torch.maximum(policy_losses_clipped, policy_losses_unclipped)
         policy_loss = rlhf.masked_mean(policy_loss, ~trajectory.responses_pad_mask)
 
-        value_loss = self.ae.loss(
+        value_loss = self.advantage.loss(
             tokens=trajectory.query_responses,
             causal_mask=trajectory.causal_mask,
             position_ids=trajectory.position_ids,

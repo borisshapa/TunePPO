@@ -1,15 +1,17 @@
 from abc import ABC, abstractmethod
+from omegaconf import DictConfig
+from typing import Iterator, Tuple
 
-from torchtune.modules import TransformerDecoder
 from torchtune.modules.peft import disable_adapter
 from torchtune.training import get_unmasked_sequence_lengths
 from torchtune.rlhf import get_reward_penalty_mask, get_rewards_ppo
 
 from ppotune.log import WandbLogger
+from ppotune.model import LoRAModel
 from ppotune.utils import append_mask
 
+from torch.nn import Parameter
 import torch
-
 
 logger = WandbLogger()
 
@@ -26,6 +28,15 @@ class IRewardModel(ABC):
     ) -> torch.Tensor: # B or B x R
         ...
 
+    @abstractmethod
+    def setup(self, cfg: DictConfig) -> None:
+        ...
+
+    def named_parameters(
+        self, prefix: str = "", recurse: bool = True, remove_duplicate: bool = True
+    ) -> Iterator[Tuple[str, Parameter]]:
+        ...
+
 
 class LLMRewardModel(IRewardModel):
     """
@@ -33,7 +44,7 @@ class LLMRewardModel(IRewardModel):
     """
     def __init__(
         self,
-        scorer: TransformerDecoder,
+        scorer: LoRAModel,
         penalise_no_eos:    bool,
         reward_penalty:     int,
         min_response_len:   int,
@@ -43,6 +54,9 @@ class LLMRewardModel(IRewardModel):
         self.penalise_no_eos = penalise_no_eos
         self.reward_penalty = reward_penalty
         self.min_response_len = min_response_len
+
+    def setup(self, cfg: DictConfig) -> None:
+        self.scorer.setup(cfg.scorer)
 
     @torch.no_grad()
     def __call__(
@@ -56,8 +70,8 @@ class LLMRewardModel(IRewardModel):
 
         queries_len = tokens.shape[1] - responses_pad_mask.shape[1]
 
-        with disable_adapter(self.scorer): # in case it is a LoRA scorer
-            scores = self.scorer(
+        with disable_adapter(self.scorer.model): # in case it is a LoRA scorer
+            scores = self.scorer.model(
                 tokens,
                 input_pos=position_ids,
                 mask=causal_mask
@@ -80,6 +94,12 @@ class LLMRewardModel(IRewardModel):
         logger.collect("scores", scores)
         return scores
 
+    def named_parameters(
+        self, prefix: str = "", recurse: bool = True, remove_duplicate: bool = True
+    ) -> Iterator[Tuple[str, Parameter]]:
+        for name, param in self.scorer.named_parameters(prefix, recurse, remove_duplicate):
+            yield name, param
+
 
 class PerTokenKLPenalizedRewardModel(LLMRewardModel):
     """
@@ -87,7 +107,7 @@ class PerTokenKLPenalizedRewardModel(LLMRewardModel):
     """
     def __init__(
         self,
-        scorer: TransformerDecoder,
+        scorer: LoRAModel,
         penalise_no_eos:    bool,
         reward_penalty:     int,
         min_response_len:   int,
