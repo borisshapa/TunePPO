@@ -61,6 +61,7 @@ class TextCompletionDataset(Dataset):
         tokens = self._tokenizer.encode(
             text=prompt,
             add_special_tokens=True,
+            truncation=True,
         )
 
         return {"tokens": tokens}

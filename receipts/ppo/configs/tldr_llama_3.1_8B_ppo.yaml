@@ -36,6 +36,7 @@ output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
 # Tokenizer
 tokenizer:
+  _component_: ppotune.tokenizers.hf_tokenizer
   path: ${prefix}/models/${model}/
   pad_token: <|finetune_right_pad_id|>
   max_seq_len: 2500

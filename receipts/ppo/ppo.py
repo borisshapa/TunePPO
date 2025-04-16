@@ -18,7 +18,7 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import Sampler
 
-from transformers import PreTrainedTokenizerBase, AutoTokenizer
+from transformers import PreTrainedTokenizerBase
 
 from torchtune import config, generation, rlhf, training, utils
 from torchtune.data import padded_collate
@@ -148,10 +148,8 @@ class PPORecipe(FTRecipeInterface):
         wandb_logger.log_config(cfg)
 
         # instantiate tokenizer
-        self._tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
-            cfg.tokenizer.path,
-            pad_token = cfg.tokenizer.pad_token,
-            model_max_length = cfg.tokenizer.max_seq_len,
+        self._tokenizer: PreTrainedTokenizerBase | ModelTokenizer = config.instantiate(
+            cfg.tokenizer
         )
 
         # setup sampler and dataloader
@@ -167,7 +165,7 @@ class PPORecipe(FTRecipeInterface):
         with training.set_default_dtype(self._dtype), self._device:
             self.policy: GenerativeLoRAModel = nested_instantiate(
                 cfg.policy,
-                pad_id=self._tokenizer.pad_token_id,
+                pad_id=self._tokenizer.pad_id,
                 rng=self._rng
             )
             self.advantage: IAdvantageModel = nested_instantiate(cfg.advantage)
@@ -295,7 +293,7 @@ class PPORecipe(FTRecipeInterface):
             padded_collate,
             pad_direction="left",
             keys_to_pad=["tokens"],
-            padding_idx=tokenizer.pad_token_id,
+            padding_idx=tokenizer.pad_id,
         )
         dataloader = DataLoader(
             dataset=dataset,
@@ -333,11 +331,11 @@ class PPORecipe(FTRecipeInterface):
         # generate responses and logits
         tokens, logits = self.policy.generate(prompt=input_ids)
 
-        tokens_pad_mask = tokens != self._tokenizer.pad_token_id
+        tokens_pad_mask = tokens != self._tokenizer.pad_id
 
         responses = tokens[:, query_len:]
         # pad responses after eos token
-        eos_mask = (responses == self._tokenizer.eos_token_id)
+        eos_mask = (responses == self._tokenizer.eos_id)
         seen_eos = torch.cumsum(eos_mask, dim=1)
         responses_pad_mask = (seen_eos > 1) | ((seen_eos == 1) & ~eos_mask)
 
