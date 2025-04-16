@@ -33,6 +33,9 @@ class WandbLogger(MetricLoggerInterface):
 
         self._log_buffer: tp.Dict[str, list[torch.Tensor]] = {}
 
+        self._completions = wandb.Table(
+            columns=["completion", "score"]
+        )
         wandb.init(
             dir=config.dir,
             entity=config.entity,
@@ -72,6 +75,12 @@ class WandbLogger(MetricLoggerInterface):
         for name in payload:
             self.collect(name, payload[name])
 
+    def collect_completion(self, completion: str, score: torch.Tensor) -> None:
+        """
+        Collect completion and score.
+        """
+        self._completions.add_data(completion, score)
+
     def flush(self, step: int) -> None:
         """
         Flush the log buffer to wandb.
@@ -80,6 +89,8 @@ class WandbLogger(MetricLoggerInterface):
             self.log(name, torch.stack(self._log_buffer[name]).mean(), step)
 
         self._log_buffer = {}
+        self.log("completion table", self._completions, step)
+        self._completions = wandb.Table(columns=["completion", "score"])
 
     def close(self) -> None:
         wandb.finish()
