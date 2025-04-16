@@ -38,12 +38,14 @@ class TextCompletionDataset(Dataset):
         tokenizer: PreTrainedTokenizerBase,
         source: str,
         column: str = "text",
+        truncation: bool = True,
         filter_fn: Optional[Callable] = None,
         **load_dataset_kwargs: Dict[str, Any],
     ) -> None:
         self._tokenizer = tokenizer
         self._data = load_dataset(source, **load_dataset_kwargs)
         self._column = column
+        self._truncation = truncation
 
         if filter_fn is not None:
             self._data = self._data.filter(filter_fn)
