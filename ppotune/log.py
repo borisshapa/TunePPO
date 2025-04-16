@@ -32,6 +32,7 @@ class WandbLogger(MetricLoggerInterface):
             os.makedirs(config.dir)
 
         self._log_buffer: tp.Dict[str, list[torch.Tensor]] = {}
+
         self._completions = wandb.Table(
             columns=["completion", "score"]
         )

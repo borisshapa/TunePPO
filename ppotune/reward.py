@@ -175,6 +175,14 @@ class DeepSeekMathRewardModel(IRewardModel):
         self.tokenizer = tokenizer
         self.num_logs = num_logs
 
+    def setup(self, cfg: DictConfig) -> None:
+        pass
+
+    def named_parameters(
+        self, prefix: str = "", recurse: bool = True, remove_duplicate: bool = True
+    ) -> Iterator[Tuple[str, Parameter]]:
+        return # no parameters
+
     @torch.no_grad()
     def __call__(
         self,
