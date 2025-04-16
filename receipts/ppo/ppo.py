@@ -17,6 +17,9 @@ from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import Sampler
+
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
+
 from torchtune import config, generation, modules, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.modules import TransformerDecoder, local_kv_cache
@@ -25,7 +28,6 @@ from torchtune.modules.peft import (
     get_adapter_params,
     set_trainable_params,
 )
-from torchtune.modules.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.training.checkpointing import Checkpointer
 from torchtune.utils import log_rank_zero
@@ -196,7 +198,10 @@ class PPORecipe(FTRecipeInterface):
         self.kl: KLPenalty = config.instantiate(cfg.kl_penalty)
 
         # instantiate tokenizer
-        self._tokenizer: ModelTokenizer = config.instantiate(cfg.tokenizer)
+        self._tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
+            cfg.tokenizer.path
+        )
+
         # setup sampler and dataloader
         self._sampler, self._dataloader = self._setup_data(
             cfg_dataset = cfg.dataset,
@@ -354,7 +359,7 @@ class PPORecipe(FTRecipeInterface):
         self,
         cfg_dataset: DictConfig,
         cfg_sampler: DictConfig,
-        tokenizer: ModelTokenizer,
+        tokenizer: PreTrainedTokenizerBase,
         batch_size: int,
         shuffle: bool,
     ) -> Tuple[Sampler, DataLoader]:
@@ -375,7 +380,7 @@ class PPORecipe(FTRecipeInterface):
             padded_collate,
             pad_direction="left",
             keys_to_pad=["tokens", "labels"],
-            padding_idx=tokenizer.pad_id,
+            padding_idx=tokenizer.pad_token_id,
         )
         dataloader = DataLoader(
             dataset=dataset,
@@ -417,15 +422,15 @@ class PPORecipe(FTRecipeInterface):
                 max_generated_tokens=self._max_generated_tokens,
                 temperature=self._temperature,
                 top_k=self._top_k,
-                pad_id=self._tokenizer.pad_id,
+                pad_id=self._tokenizer.pad_token_id,
                 rng=self._rng,
             )
 
-        tokens_pad_mask = tokens != self._tokenizer.pad_id
+        tokens_pad_mask = tokens != self._tokenizer.pad_token_id
 
         responses = tokens[:, query_len:]
         # pad responses after eos token
-        eos_mask = (responses == self._tokenizer.eos_id)
+        eos_mask = (responses == self._tokenizer.eos_token_id)
         seen_eos = torch.cumsum(eos_mask, dim=1)
         responses_pad_mask = (seen_eos > 1) | ((seen_eos == 1) & ~eos_mask)
 
