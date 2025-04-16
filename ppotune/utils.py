@@ -1,6 +1,8 @@
 import typing as tp
 import torch
 
+from transformers import PreTrainedTokenizerBase
+
 from torchtune.modules.transforms.tokenizers import ModelTokenizer
 from torchtune.models.llama3 import Llama3Tokenizer
 from torchtune.models.mistral import MistralTokenizer
@@ -72,4 +74,10 @@ def pretty_decode(
         return tokenizer.decode(
             completion_tokens
         )
+    if isinstance(tokenizer, PreTrainedTokenizerBase):
+        return tokenizer.decode(
+            completion_tokens,
+            skip_special_tokens=False,
+        )
+
     raise NotImplementedError(f"{type(tokenizer)} is not supported")
