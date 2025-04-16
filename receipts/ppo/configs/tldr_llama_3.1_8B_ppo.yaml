@@ -24,7 +24,7 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-prefix: /home/optteam/.tune
+prefix: /home/evgurovv/torchtune
 
 project: TLDR
 group: Llama-SmallSFT-PPO
@@ -37,7 +37,8 @@ output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 # Tokenizer
 tokenizer:
   path: ${prefix}/models/${model}/
-  pad_token: 
+  pad_token: <|finetune_right_pad_id|>
+  max_seq_len: 2500
 
 # Dataset
 dataset:
@@ -46,7 +47,6 @@ dataset:
   # source: trl-lib/tldr
   split: train
   column: prompt
-  add_eos: False
 
 # Batch parameters
 batch_size: 64

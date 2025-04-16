@@ -17,6 +17,9 @@ from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import Sampler
+
+from transformers import PreTrainedTokenizerBase, AutoTokenizer
+
 from torchtune import config, generation, rlhf, training, utils
 from torchtune.data import padded_collate
 from torchtune.modules.peft import (
@@ -146,7 +149,9 @@ class PPORecipe(FTRecipeInterface):
 
         # instantiate tokenizer
         self._tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
-            cfg.tokenizer.path
+            cfg.tokenizer.path,
+            pad_token = cfg.tokenizer.pad_token,
+            model_max_length = cfg.tokenizer.max_seq_len,
         )
 
         # setup sampler and dataloader
@@ -162,7 +167,7 @@ class PPORecipe(FTRecipeInterface):
         with training.set_default_dtype(self._dtype), self._device:
             self.policy: GenerativeLoRAModel = nested_instantiate(
                 cfg.policy,
-                pad_id=self._tokenizer.pad_id,
+                pad_id=self._tokenizer.pad_token_id,
                 rng=self._rng
             )
             self.advantage: IAdvantageModel = nested_instantiate(cfg.advantage)
@@ -289,7 +294,7 @@ class PPORecipe(FTRecipeInterface):
         collator = partial(
             padded_collate,
             pad_direction="left",
-            keys_to_pad=["tokens", "labels"],
+            keys_to_pad=["tokens"],
             padding_idx=tokenizer.pad_token_id,
         )
         dataloader = DataLoader(
