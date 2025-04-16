@@ -18,11 +18,11 @@ class IAdvantageModel(ABC):
     """
     Advantage Model Abstract Interface.
     """
-    def __init__(self, rm: IRewardModel) -> None:
-        self.rm = rm
+    def __init__(self, reward: IRewardModel) -> None:
+        self.rm = reward
 
     def setup(self, cfg: DictConfig) -> None:
-        self.rm.setup(cfg.rm)
+        self.rm.setup(cfg.reward)
 
     @abstractmethod
     def __call__(
@@ -59,14 +59,14 @@ class GAE(IAdvantageModel):
     """
     def __init__(
         self,
-        rm: LLMRewardModel,
+        reward: LLMRewardModel,
         gamma: float,
         lmbda: float,
         value_coeff: float,
         value_clip_range: float
     ) -> None:
 
-        super().__init__(rm)
+        super().__init__(reward)
 
         self.gamma = gamma
         self.lmbda = lmbda
@@ -172,11 +172,11 @@ class GRAE(IAdvantageModel):
     """
     def __init__(
         self,
-        rm: IRewardModel,
+        reward: IRewardModel,
         group_size: int
     ) -> None:
 
-        super().__init__(rm)
+        super().__init__(reward)
         self.group_size = group_size
 
     @torch.no_grad()

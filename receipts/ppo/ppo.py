@@ -159,21 +159,19 @@ class PPORecipe(FTRecipeInterface):
         with training.set_default_dtype(self._dtype), self._device:
             self.policy: GenerativeLoRAModel = nested_instantiate(
                 cfg.policy,
-                max_seq_len=self._tokenizer.max_seq_len,
-                generation_batch_size=self._forward_batch_size,
                 pad_id=self._tokenizer.pad_id,
                 rng=self._rng
             )
-            self.am: IAdvantageModel = nested_instantiate(cfg.advantage)
+            self.advantage: IAdvantageModel = nested_instantiate(cfg.advantage)
 
         self.policy.setup(cfg.policy)
-        self.am.setup(cfg.advantage)
+        self.advantage.setup(cfg.advantage)
 
         # instantiate optimizer
         self._optimizer: Optimizer = config.instantiate(
             cfg.optimizer, chain(
                 self.policy.parameters(),
-                self.am.parameters()
+                self.advantage.parameters()
         ))
         # initialize reference policy
         self._ref_policy: DistributedPolicyMixture = config.instantiate(
@@ -362,7 +360,7 @@ class PPORecipe(FTRecipeInterface):
         ref_logprobs[responses_pad_mask] = 1.0
         del ref_logits
 
-        am_trajectory: AdvantageTrajectoryStats = self.am(
+        advantage_trajectory: AdvantageTrajectoryStats = self.advantage(
             tokens          = tokens,
             causal_mask     = causal_mask,
             position_ids    = position_ids,
@@ -377,9 +375,9 @@ class PPORecipe(FTRecipeInterface):
             responses_pad_mask  = responses_pad_mask,
             gen_logprobs        = gen_logprobs,
             ref_logprobs        = ref_logprobs,
-            values              = am_trajectory.values,
-            returns             = am_trajectory.returns,
-            advantages          = am_trajectory.advantages,
+            values              = advantage_trajectory.values,
+            returns             = advantage_trajectory.returns,
+            advantages          = advantage_trajectory.advantages,
         )
 
     def generate_trajectory_batched(self, input_ids: torch.Tensor) -> PPOTrajectoryStats:
@@ -458,7 +456,7 @@ class PPORecipe(FTRecipeInterface):
 
                         wandb_logger.collect_dict({
                             **self._collect_grad_norm("policy", self.policy),
-                            **self._collect_grad_norm("value", self.am)
+                            **self._collect_grad_norm("value", self.advantage)
                         })
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
@@ -520,7 +518,7 @@ class PPORecipe(FTRecipeInterface):
         policy_loss = torch.maximum(policy_losses_clipped, policy_losses_unclipped)
         policy_loss = rlhf.masked_mean(policy_loss, ~trajectory.responses_pad_mask)
 
-        value_loss = self.am.loss(
+        value_loss = self.advantage.loss(
             tokens=trajectory.query_responses,
             causal_mask=trajectory.causal_mask,
             position_ids=trajectory.position_ids,

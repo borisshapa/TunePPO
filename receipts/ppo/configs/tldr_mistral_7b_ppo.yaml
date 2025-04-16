@@ -6,8 +6,7 @@
 # This config assumes that you've run the following commands before launching
 # this run: (take a look what prefix is down the config)
 # 1. Download a reward model
-#   a. (deprecated) tune download weqweasdas/RM-Mistral-7B --output-dir ${prefix}/models/RM-Mistral-7B/
-#   b. tune download RLHF-And-Friends/RM-TLDR-Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-RM/
+#   a. (TLDR-RM) tune download RLHF-And-Friends/RM-TLDR-Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-RM/
 # 2. Get Mistral-7B model
 #   a. (Base) tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-Base/
 #   b. (Instruct) tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct/
@@ -18,12 +17,7 @@
 # value models as well as WandBLogger logs are saved in sub-folders.
 #
 # To launch on N devices (starting from 1), run the following command from repo root:
-#   tune run receipts/ppo.py --nproc_per_node N --config configs/mistral_7b.yaml
-#
-# You can add specific overrides through the command line. For example
-# to override the checkpointer directory while launching training
-# you can run:
-#   tune run receipts/ppo.py --nproc_per_node N --config configs/mistral_7b.yaml checkpointer.checkpoint_dir=<YOUR_CHECKPOINT_DIR>
+#   tune run receipts/ppo.py --nproc_per_node N --config receipts/ppo/configs/tldr_mistral_7b_ppo.yaml
 #
 
 # NOTE: Use full paths only. '~' would not expand.
@@ -32,11 +26,10 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-# prefix: /home/optteam/.torchtune
 prefix: /home/optteam/.tune
 
 project: TLDR
-group: Base-PPO-Advantage-Refactored
+group: Base-PPO
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: Mistral-7B-RM
 run: PPO
@@ -58,9 +51,20 @@ dataset:
   column: prompt
   add_eos: False
 
+# Batch parameters
+batch_size: 64
+group_size: 1 # needed in GRPO. just leave it as is.
+num_steps: 10000
+ppo_epochs: 2
+ppo_batch_size: 32
+gradient_accumulation_steps: 4 # Use to increase effective batch size
+forward_batch_size: 8
+
 # Policy / Reference Policy when adapter disabled
 policy:
   _component_: ppotune.model.GenerativeLoRAModel
+  generation_batch_size: ${forward_batch_size}
+  max_seq_len: ${tokenizer.max_seq_len}
   max_generated_tokens: 58
   temperature: 0.7
   top_k: null
@@ -90,14 +94,12 @@ policy:
 
 advantage:
   _component_: ppotune.advantage.GAE
-
   gamma: 1
   lmbda: 0.95
   value_coeff: 0.1
   value_clip_range: 0.2
-  rm:
+  reward:
     _component_: ppotune.reward.PerTokenKLPenalizedRewardModel
-
     min_response_len: 18      # would penalize generations shorter than
     penalise_no_eos: True     # would penalize generations with no eos
     reward_penalty: -3        # penalty value
@@ -128,18 +130,8 @@ advantage:
         lora_dropout: 0.0
         quantize_base: False
 
-
 seed: 0xD1CE
 shuffle: True
-
-# Batch sizes
-batch_size: 64
-group_size: 1 # needed in GRPO. just leave it as is.
-num_steps: 10000
-ppo_epochs: 2
-ppo_batch_size: 32
-gradient_accumulation_steps: 4 # Use to increase effective batch size
-forward_batch_size: 8
 
 optimizer:
   _component_: bitsandbytes.optim.PagedAdamW
