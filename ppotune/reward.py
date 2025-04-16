@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from omegaconf import DictConfig
 from typing import Iterator, Tuple
 
 from torchtune.modules.peft import disable_adapter
@@ -28,7 +29,7 @@ class IRewardModel(ABC):
         ...
 
     @abstractmethod
-    def setup(self) -> None:
+    def setup(self, cfg: DictConfig) -> None:
         ...
 
     def named_parameters(
@@ -54,8 +55,8 @@ class LLMRewardModel(IRewardModel):
         self.reward_penalty = reward_penalty
         self.min_response_len = min_response_len
 
-    def setup(self) -> None:
-        self.scorer.setup()
+    def setup(self, cfg: DictConfig) -> None:
+        self.scorer.setup(cfg.scorer)
 
     @torch.no_grad()
     def __call__(

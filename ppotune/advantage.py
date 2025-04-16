@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from omegaconf import DictConfig
 from typing import Iterator, Tuple
 from torchtune import rlhf
 
@@ -20,8 +21,8 @@ class IAdvantageModel(ABC):
     def __init__(self, rm: IRewardModel) -> None:
         self.rm = rm
 
-    def setup(self) -> None:
-        self.rm.setup()
+    def setup(self, cfg: DictConfig) -> None:
+        self.rm.setup(cfg.rm)
 
     @abstractmethod
     def __call__(

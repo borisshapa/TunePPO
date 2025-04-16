@@ -60,31 +60,33 @@ dataset:
 
 # Policy / Reference Policy when adapter disabled
 policy:
-  _component_: torchtune.models.mistral.lora_mistral_7b
-  # (Q)LoRA
-  lora_attn_modules: ['q_proj', 'k_proj', 'v_proj', 'output_proj']
-  apply_lora_to_mlp: True
-  apply_lora_to_output: False
-  lora_rank: 64  # higher increases accuracy and memory
-  lora_alpha: 16  # usually alpha=2*rank
-  lora_dropout: 0.0
-  quantize_base: False # stands for 'Q' in QLoRA
-
-# checkpointer for the policy model
-policy_checkpointer:
-  _component_: torchtune.training.FullModelHFCheckpointer
-  checkpoint_dir: ${prefix}/models/${model}/
-  checkpoint_files:
-    [
-      "model-00001-of-00003.safetensors",
-      "model-00002-of-00003.safetensors",
-      "model-00003-of-00003.safetensors",
-    ]
-  # this is the only place where you should update `recipe_checkpoint` if resuming training
-  recipe_checkpoint: null
-  output_dir: ${output_dir}/policy
-  model_type: MISTRAL
-
+  _component_: ppotune.model.GenerativeLoRAModel
+  max_generated_tokens: 58
+  temperature: 0.7
+  top_k: null
+  model:
+    _component_: torchtune.models.mistral.lora_mistral_7b
+    # (Q)LoRA
+    lora_attn_modules: ['q_proj', 'k_proj', 'v_proj', 'output_proj']
+    apply_lora_to_mlp: True
+    apply_lora_to_output: False
+    lora_rank: 64  # higher increases accuracy and memory
+    lora_alpha: 16  # usually alpha=2*rank
+    lora_dropout: 0.0
+    quantize_base: False # stands for 'Q' in QLoRA
+  ckpt:
+    _component_: torchtune.training.FullModelHFCheckpointer
+    checkpoint_dir: ${prefix}/models/${model}/
+    checkpoint_files:
+      [
+        "model-00001-of-00003.safetensors",
+        "model-00002-of-00003.safetensors",
+        "model-00003-of-00003.safetensors",
+      ]
+    # this is the only place where you should update `recipe_checkpoint` if resuming training
+    recipe_checkpoint: null
+    output_dir: ${output_dir}/policy
+    model_type: MISTRAL
 
 advantage:
   _component_: ppotune.advantage.GAE
@@ -130,26 +132,20 @@ advantage:
 seed: 0xD1CE
 shuffle: True
 
-# Training arguments
+# Batch sizes
 batch_size: 64
 group_size: 1 # needed in GRPO. just leave it as is.
 num_steps: 10000
 ppo_epochs: 2
 ppo_batch_size: 32
 gradient_accumulation_steps: 4 # Use to increase effective batch size
+forward_batch_size: 8
 
-# Memory management and performance
 optimizer:
   _component_: bitsandbytes.optim.PagedAdamW
   lr: 1e-4
 
 dtype: bf16 # | fp32 | fp16 is not supported
-
-# batch size for forward pass during generation
-forward_batch_size: 8
-max_generated_tokens: 58
-temperature: 0.7
-top_k: null
 
 sampler:
   _component_: torch.utils.data.DistributedSampler
