@@ -6,7 +6,7 @@
 # This config assumes that you've run the following commands before launching
 # this run: (take a look what prefix is down the config)
 # Download the policy model
-#   a. (Base) TODO
+#   a. (Base) tune download meta-llama/Llama-3.1-8B --output-dir ${prefix}/models/Llama-3.1-8B-Base/ --ignore-patterns "original/consolidated.00.pth"
 #   b. (Instruct) tune download meta-llama/Llama-3.1-8B-Instruct --output-dir ${prefix}/models/Llama-3.1-8B-Instruct/ --ignore-patterns "original/consolidated.00.pth"
 #
 # You'll also need to ensure that {output_dir} exists beforehand, as checkpoints for policy and
@@ -25,27 +25,28 @@
 prefix: /home/optteam/.tune
 
 project: GSM8K
-group: Llama-3.1-8B
-model: Llama-3.1-8B-Instruct
+group: Llama-3.1-8B-Instruct-GRPO
+model: Llama-3.1-8B-Instruct # | Llama-3.1-8B-Base
 run: GRPO
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
 # Tokenizer
 tokenizer:
-  _component_: ppotune.models.llama3_1.llama3_tokenizer
+  _component_: ppotune.tokenizers.llama3_tokenizer
   eos_token: <|eot_id|>
   path: ${prefix}/models/${model}/original/tokenizer.model
   max_seq_len: 2500
 
 # Dataset
 dataset:
-  _component_: ppotune.datasets.gsm8k_dataset
+  _component_: ppotune.datasets.chat_gsm8k_dataset
+  # _component_: ppotune.datasets.plain_gsm8k_dataset
   split: train
 
 # Batch parameters
 batch_size: 64
-group_size: 1 # needed in GRPO. just leave it as is.
+group_size: 8 # needed in GRPO. just leave it as is.
 num_steps: 10000
 ppo_epochs: 2
 ppo_batch_size: 32
@@ -57,7 +58,7 @@ policy:
   _component_: ppotune.model.GenerativeLoRAModel
   generation_batch_size: ${forward_batch_size}
   max_seq_len: ${tokenizer.max_seq_len}
-  max_generated_tokens: 58
+  max_generated_tokens: 250
   temperature: 0.7
   top_k: null
   model:

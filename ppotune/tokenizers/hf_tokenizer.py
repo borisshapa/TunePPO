@@ -10,8 +10,8 @@ def hf_tokenizer(
         pad_token = pad_token,
         model_max_length = max_seq_len
     )
-    
+
     tokenizer.pad_id = tokenizer.pad_token_id
     tokenizer.eos_id = tokenizer.eos_token_id
-    
+
     return tokenizer

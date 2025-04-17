@@ -10,9 +10,6 @@ from torchtune.models.llama3_1._component_builders import (
     llama3_mlp,
 )
 
-from torchtune.models.llama3 import llama3_tokenizer as default_llama3_tokenizer
-from torchtune.models.llama3 import Llama3Tokenizer
-
 from torchtune.modules import (
     MultiHeadAttention,
     RMSNorm,
@@ -24,7 +21,6 @@ from torchtune.modules.common_utils import _register_reparametrize_state_dict_ho
 
 from torchtune.modules.peft import DoRALinear, LORA_ATTN_MODULES, LoRALinear
 
-from torchtune.data._prompt_templates import _TemplateType
 """
 Component builders for the classifier model based on Llama3.1 and popular
 variants such as LoRA.
@@ -38,41 +34,6 @@ two benefits:
 - Builder functions expose a set of configurable params which keep the
  constructors of the building blocks simple.
 """
-
-
-def llama3_tokenizer(
-    path: str,
-    eos_token: str = "<|end_of_text|>",
-    special_tokens_path: Optional[str] = None,
-    max_seq_len: Optional[int] = None,
-    prompt_template: Optional[_TemplateType] = None,
-) -> Llama3Tokenizer:
-    """
-    Tokenizer Overload for Llama3 with customizable eos token.
-
-    Args:
-        path (str): path to the tokenizer
-        special_tokens_path (Optional[str]): Path to ``tokenizer.json`` from Hugging Face
-            model files that contains all registered special tokens, or a local json file
-            structured similarly. Default is None to use the canonical Llama3 special tokens.
-        max_seq_len (Optional[int]): maximum sequence length for tokenizing a single list of messages,
-            after which the input will be truncated. Default is None.
-        prompt_template (Optional[_TemplateType]): optional specified prompt template.
-            If a string, it is assumed to be the dotpath of a :class:`~torchtune.data.PromptTemplateInterface`
-            class. If a dictionary, it is assumed to be a custom prompt template mapping role to the
-            prepend/append tags.
-
-    Returns:
-        Llama3Tokenizer: Instantiation of the Llama3 tokenizer
-    """
-    tokenizer = default_llama3_tokenizer(
-        path,
-        special_tokens_path,
-        max_seq_len,
-        prompt_template
-    )
-    tokenizer.eos_id = tokenizer.special_tokens[eos_token]
-    return tokenizer
 
 # ------------------ Llama3.1 Classifier ------------------
 

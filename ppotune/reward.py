@@ -34,7 +34,7 @@ class IRewardModel(ABC):
         ...
 
     @abstractmethod
-    def setup(self, cfg: DictConfig) -> None:
+    def setup(self, cfg: DictConfig, **kwargs) -> None:
         ...
 
     def named_parameters(
@@ -60,7 +60,7 @@ class LLMRewardModel(IRewardModel):
         self.reward_penalty = reward_penalty
         self.min_response_len = min_response_len
 
-    def setup(self, cfg: DictConfig) -> None:
+    def setup(self, cfg: DictConfig, **kwargs) -> None:
         self.scorer.setup(cfg.scorer)
 
     @torch.no_grad()
@@ -136,6 +136,7 @@ class PerTokenKLPenalizedRewardModel(LLMRewardModel):
         responses_pad_mask: torch.Tensor, # B x R
         gen_logprobs:       torch.Tensor, # B x R
         ref_logprobs:       torch.Tensor, # B x R
+        **kwargs
     ) -> torch.Tensor: # B x R
 
         scores = super().__call__(
@@ -166,22 +167,21 @@ class DeepSeekMathRewardModel(IRewardModel):
     """
     Rule-Based Reward Model as in DeepSeekMath.
     """
-    def __init__(
+    def __init__(self) -> None:
+        return
+
+    def setup(
         self,
+        cfg: DictConfig,
         tokenizer: ModelTokenizer,
-        num_logs: int = 1,
-        **kwargs,
+        **kwargs
     ) -> None:
         self.tokenizer = tokenizer
-        self.num_logs = num_logs
-
-    def setup(self, cfg: DictConfig) -> None:
-        pass
 
     def named_parameters(
         self, prefix: str = "", recurse: bool = True, remove_duplicate: bool = True
     ) -> Iterator[Tuple[str, Parameter]]:
-        return # no parameters
+        return iter([])
 
     @torch.no_grad()
     def __call__(

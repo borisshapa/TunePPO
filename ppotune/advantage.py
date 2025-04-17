@@ -21,8 +21,8 @@ class IAdvantageModel(ABC):
     def __init__(self, reward: IRewardModel) -> None:
         self.rm = reward
 
-    def setup(self, cfg: DictConfig) -> None:
-        self.rm.setup(cfg.reward)
+    def setup(self, cfg: DictConfig, **kwargs) -> None:
+        self.rm.setup(cfg.reward, **kwargs)
 
     @abstractmethod
     def __call__(

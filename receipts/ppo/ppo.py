@@ -35,7 +35,7 @@ from ppotune.datatypes import (
     PPOTrajectoryStats,
     AdvantageTrajectoryStats,
 )
-from ppotune.data import LeftPadCollator
+from ppotune.datasets.utils import LeftPadCollator
 from ppotune.dist import DistributedPolicyMixture
 from ppotune.loss import KLPenalty
 from ppotune.log import WandbLogger
@@ -171,7 +171,7 @@ class PPORecipe(FTRecipeInterface):
             self.advantage: IAdvantageModel = nested_instantiate(cfg.advantage)
 
         self.policy.setup(cfg.policy)
-        self.advantage.setup(cfg.advantage)
+        self.advantage.setup(cfg.advantage, tokenizer=self._tokenizer)
 
         # instantiate optimizer
         self._optimizer: Optimizer = config.instantiate(
