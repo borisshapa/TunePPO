@@ -18,23 +18,24 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import Sampler
 
-from transformers import PreTrainedTokenizerBase
-
 from torchtune import config, generation, rlhf, training, utils
-from torchtune.data import padded_collate
 from torchtune.modules.peft import (
     disable_adapter,
 )
 from torchtune.modules.transforms.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.utils import log_rank_zero
+
 from tqdm import tqdm
+from transformers import PreTrainedTokenizerBase
+
 from ppotune.advantage import IAdvantageModel
 from ppotune.config import nested_instantiate
 from ppotune.datatypes import (
     PPOTrajectoryStats,
     AdvantageTrajectoryStats,
 )
+from ppotune.datasets.utils import LeftPadCollator
 from ppotune.dist import DistributedPolicyMixture
 from ppotune.loss import KLPenalty
 from ppotune.log import WandbLogger
@@ -170,7 +171,7 @@ class PPORecipe(FTRecipeInterface):
             self.advantage: IAdvantageModel = nested_instantiate(cfg.advantage)
 
         self.policy.setup(cfg.policy)
-        self.advantage.setup(cfg.advantage)
+        self.advantage.setup(cfg.advantage, tokenizer=self._tokenizer)
 
         # instantiate optimizer
         self._optimizer: Optimizer = config.instantiate(
@@ -288,11 +289,9 @@ class PPORecipe(FTRecipeInterface):
             shuffle=shuffle,
             drop_last=True
         ) # better set seed here
-        collator = partial(
-            padded_collate,
-            pad_direction="left",
-            keys_to_pad=["tokens"],
-            padding_idx=tokenizer.pad_id,
+        collator = LeftPadCollator(
+            tokens_key="tokens",
+            pad_token=tokenizer.pad_id
         )
         dataloader = DataLoader(
             dataset=dataset,
@@ -304,7 +303,7 @@ class PPORecipe(FTRecipeInterface):
         return sampler, dataloader
 
     @torch.no_grad()
-    def generate_trajectory(self, input_ids: torch.Tensor) -> PPOTrajectoryStats:
+    def generate_trajectory(self, batch: dict) -> PPOTrajectoryStats:
         """
         Generates a trajectory given the current policy and value models, the reference policy
         model, the reward model, and batch of inputs. This is done over the following steps:
@@ -319,16 +318,17 @@ class PPORecipe(FTRecipeInterface):
         6. Mask out all the invalid values in the trajectory due to padding tokens.
 
         Args:
-            input_ids (torch.Tensor): tensor of input token IDs with shape [b, seq_length]
+            batch (dict): dict of input data with "tokens" key containing tensor of input token
+            IDs with shape [b, seq_length]
 
         Returns:
             PPOTrajectoryStats: An instance of :class:`ppotune.datatypes.PPOTrajectoryStats`
                 comprising the current trajectory.
         """
-        query_len = input_ids.shape[1]
+        query_len = batch["tokens"].shape[1]
 
         # generate responses and logits
-        tokens, logits = self.policy.generate(prompt=input_ids)
+        tokens, logits = self.policy.generate(prompt=batch["tokens"])
 
         tokens_pad_mask = tokens != self._tokenizer.pad_id
 
@@ -371,7 +371,8 @@ class PPORecipe(FTRecipeInterface):
             position_ids    = position_ids,
             responses_pad_mask  = responses_pad_mask,
             gen_logprobs = gen_logprobs,
-            ref_logprobs = ref_logprobs
+            ref_logprobs = ref_logprobs,
+            batch=batch
         )
         sample_completion = pretty_decode(
             self._tokenizer, tokens[0].clone(), responses_pad_mask[0]
@@ -391,7 +392,7 @@ class PPORecipe(FTRecipeInterface):
             advantages          = advantage_trajectory.advantages,
         )
 
-    def generate_trajectory_batched(self, input_ids: torch.Tensor) -> PPOTrajectoryStats:
+    def generate_trajectory_batched(self, batch: dict) -> PPOTrajectoryStats:
         """
         Generates a ``self.batch_size`` batch of trajectories using `self._forward_batch_size`
         batch sizes. See ``generate_trajectory`` for more details.
@@ -403,13 +404,25 @@ class PPORecipe(FTRecipeInterface):
             PPOTrajectoryStats: An instance of :class:`ppotune.datatypes.PPOTrajectoryStats`,
                 comprising the current trajectory.
         """
+        batch["tokens"] = batch["tokens"].to(self._device)
         trajectories: List[PPOTrajectoryStats] = []
         for batch_start in range(0, self.batch_size, self._forward_batch_size):
-            batch_input_ids = input_ids[
-                batch_start : batch_start + self._forward_batch_size
-            ]
-            trajectories.append(self.generate_trajectory(batch_input_ids))
-        return PPOTrajectoryStats(*map(torch.cat, zip(*trajectories)))
+            subbatch = {}
+            for key in batch.keys():
+                subbatch[key] = batch[key][
+                    batch_start : batch_start + self._forward_batch_size
+                ]
+            trajectories.append(self.generate_trajectory(subbatch))
+            torch.cuda.empty_cache()
+
+        trajectory = PPOTrajectoryStats(*map(torch.cat, zip(*trajectories)))
+        wandb_logger.collect_dict({
+            "num_stop_tokens": trajectory.responses_pad_mask.any(-1).sum().float(),
+            "response_lengths": training.get_unmasked_sequence_lengths(
+                trajectory.responses_pad_mask
+            ).float(),
+        })
+        return trajectory
 
     def train(self) -> None:
         """
@@ -419,26 +432,15 @@ class PPORecipe(FTRecipeInterface):
 
         training_completed = False
         pbar = tqdm(total=self._total_steps, initial=self._steps_run)
+
         for curr_epoch in range(self._epochs_run, self._total_epochs):
             # Ensure data is not reshuffled at new epoch so the agents are
             # trained on non-overlapping data.
             self._sampler.set_epoch(0)
 
             for _, batch in enumerate(self._dataloader):
-                batch = batch["tokens"].to(self._device)
 
-                # generate trajectories using:
-                # - the current policy
-                # - the current value function
-                # - the reference model
                 trajectory = self.generate_trajectory_batched(batch)
-
-                wandb_logger.collect_dict({
-                    "num_stop_tokens": trajectory.responses_pad_mask.any(-1).sum().float(),
-                    "response_lengths": training.get_unmasked_sequence_lengths(
-                        trajectory.responses_pad_mask
-                    ).float(),
-                })
                 # optimize with PPO objective over multiple epochs
                 for _ in range(self._ppo_epochs):
                     batch_idxs = torch.randperm(self.batch_size, device=self._device)
@@ -465,16 +467,11 @@ class PPORecipe(FTRecipeInterface):
                             self.ppo_step(batch_trajectory)
                             del batch_trajectory
 
-                        wandb_logger.collect_dict({
-                            **self._collect_grad_norm("policy", self.policy),
-                            **self._collect_grad_norm("value", self.advantage)
-                        })
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
 
                         self.global_step += 1
 
-                # step 5. profit
                 self._steps_run += 1
                 wandb_logger.flush(step=self.global_step)
                 self.cleanup_after_step(trajectory)
@@ -558,6 +555,8 @@ class PPORecipe(FTRecipeInterface):
             "ratios": ratios.mean(),
             "clipfrac": clipfrac,
             "approx_policy_kl": approx_policy_kls,
+            **self._collect_grad_norm("policy", self.policy),
+            **self._collect_grad_norm("value", self.advantage)
         })
 
     def _collect_grad_norm(self, name: str, module: nn.Module) -> dict[str, torch.Tensor]:

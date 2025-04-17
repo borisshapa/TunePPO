@@ -36,14 +36,13 @@ class LoRAModel(nn.Module):
         super().__init__()
         self.ckpt = ckpt
         self.model = model
+        set_trainable_params(self.model, get_adapter_params(self.model))
         self._dtype=torch.get_default_dtype()
         self._device=utils.get_device("cuda")
 
     def setup(self, cfg: DictConfig) -> None:
 
         self._adapter_config = get_adapter_config(cfg.model)
-        set_trainable_params(self.model, get_adapter_params(self.model))
-
         state_dict = self.ckpt.load_checkpoint()[MODEL_KEY]
         set_activation_checkpointing(
             self.model, auto_wrap_policy={TransformerSelfAttentionLayer}
