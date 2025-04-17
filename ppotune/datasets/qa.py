@@ -67,7 +67,6 @@ class QADataset(Dataset):
         if self.prompt_template is None:
             tokens = self.tokenizer.tokenize_messages(
                 messages=messages,
-                add_eos=False,
                 add_generation_prompt=True
             )
         else:

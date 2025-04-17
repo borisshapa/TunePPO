@@ -28,7 +28,6 @@ class Llama3Tokenizer(DefaultLlama3Tokenizer):
         messages: tp.List[Message],
         *,
         add_generation_prompt: bool = False,
-        add_eos: bool = False,
     ) -> tp.Tuple[tp.List[int]]:
         """
         Tokenize a list of messages into a list of tokens as defined by default
@@ -50,9 +49,6 @@ class Llama3Tokenizer(DefaultLlama3Tokenizer):
 
         if add_generation_prompt:
             tokens = tokens + self.generation_prompt()
-
-        if add_eos:
-            tokens = tokens + [self.eos_id]
 
         if self.max_seq_len:
             tokens = tokens[:self.max_seq_len]
