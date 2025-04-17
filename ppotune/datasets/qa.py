@@ -72,10 +72,10 @@ class QADataset(Dataset):
             )
         else:
             text = apply_prompt_template(
-                prompt_template=self.prompt_template,
+                template=self.prompt_template,
                 messages=messages,
                 add_generation_prompt=True
             )
-            tokens = self.tokenizer.encode(text)
+            tokens = self.tokenizer.encode(text, add_eos=False)
 
         return {"tokens": tokens, "answers": answer}

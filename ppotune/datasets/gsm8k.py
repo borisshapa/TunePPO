@@ -2,7 +2,7 @@ import typing as tp
 
 from torchtune.modules.tokenizers import ModelTokenizer
 
-from ppotune.datasets.utils import PromptTemplate
+from ppotune.datasets.utils import PromptTemplate, PrefixSuffix
 from ppotune.datasets.qa import QAProblem, QATransform, QADataset
 
 
@@ -16,9 +16,9 @@ GSM8K_SYSTEM_PROMPT: str = (
 )
 
 GSM8K_PROMPT_TEMPLATE: PromptTemplate = {
-    "system": ("", " "),
-    "user":  ("User: ", " "),
-    "assistant":  ("Assistant: ", "")
+    "system": PrefixSuffix("", " "),
+    "user":  PrefixSuffix("User: ", " "),
+    "assistant":  PrefixSuffix("Assistant: ", "")
 }
 
 class GSM8K(QATransform):

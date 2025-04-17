@@ -44,7 +44,7 @@ class Llama3Tokenizer(DefaultLlama3Tokenizer):
         """
         tokens = [self.bos_id]
 
-        for i, message in enumerate(messages):
+        for message in messages:
             tokenized_message = self.tokenize_message(message)
             tokens = tokens + tokenized_message
 

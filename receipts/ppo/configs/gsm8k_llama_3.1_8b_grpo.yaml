@@ -25,8 +25,10 @@
 prefix: /home/optteam/.tune
 
 project: GSM8K
-group: Llama-3.1-8B-Instruct-GRPO
-model: Llama-3.1-8B-Instruct # | Llama-3.1-8B-Base
+# group: Llama-3.1-8B-Instruct-GRPO
+# model: Llama-3.1-8B-Instruct
+group: Llama-3.1-8B-Base-GRPO
+model: Llama-3.1-8B-Base
 run: GRPO
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
@@ -34,14 +36,15 @@ output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 # Tokenizer
 tokenizer:
   _component_: ppotune.tokenizers.llama3_tokenizer
-  eos_token: <|eot_id|>
+  # eos_token: <|eot_id|> # for chat model
+  eos_token: <|end_of_text|> # for base model
   path: ${prefix}/models/${model}/original/tokenizer.model
   max_seq_len: 2500
 
 # Dataset
 dataset:
-  _component_: ppotune.datasets.chat_gsm8k_dataset
-  # _component_: ppotune.datasets.plain_gsm8k_dataset
+  # _component_: ppotune.datasets.chat_gsm8k_dataset
+  _component_: ppotune.datasets.plain_gsm8k_dataset
   split: train
 
 # Batch parameters
