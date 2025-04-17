@@ -51,9 +51,9 @@ batch_size: 64
 group_size: 1 # needed in GRPO. just leave it as is.
 num_steps: 10000
 ppo_epochs: 2
-ppo_batch_size: 32
+ppo_batch_size: 16
 gradient_accumulation_steps: 4 # Use to increase effective batch size
-forward_batch_size: 8
+forward_batch_size: 4
 
 # Policy / Reference Policy when adapter disabled
 policy:
