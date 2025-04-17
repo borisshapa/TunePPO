@@ -413,6 +413,7 @@ class PPORecipe(FTRecipeInterface):
                     batch_start : batch_start + self._forward_batch_size
                 ]
             trajectories.append(self.generate_trajectory(subbatch))
+            torch.cuda.empty_cache()
 
         trajectory = PPOTrajectoryStats(*map(torch.cat, zip(*trajectories)))
         wandb_logger.collect_dict({
