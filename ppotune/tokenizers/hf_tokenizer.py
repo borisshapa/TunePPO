@@ -13,7 +13,7 @@ def messages_to_conversation(
 ) -> tp.List[tp.Dict[str, str]]:
 
     conversation = [
-        {"role": message.role, "content": message.content}
+        {"role": message.role, "content": message.text_content}
         for message in messages
     ]
 
