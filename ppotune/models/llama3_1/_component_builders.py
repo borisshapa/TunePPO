@@ -22,19 +22,18 @@ from torchtune.modules.common_utils import _register_reparametrize_state_dict_ho
 from torchtune.modules.peft import DoRALinear, LORA_ATTN_MODULES, LoRALinear
 
 """
-Component builders for the classifier model based on Llama3.1 and popular 
+Component builders for the classifier model based on Llama3.1 and popular
 variants such as LoRA.
 
 torchtune provides composable building blocks. Builder functions help
 stitch these building blocks into higher-level components. This design has
 two benefits:
-- The building blocks themselves are very flexible. For example, 
- ``MultiHeadAttention`` can take either nn.Linear or nn.LoRALinear for 
+- The building blocks themselves are very flexible. For example,
+ ``MultiHeadAttention`` can take either nn.Linear or nn.LoRALinear for
  ``q_proj``.
-- Builder functions expose a set of configurable params which keep the 
+- Builder functions expose a set of configurable params which keep the
  constructors of the building blocks simple.
 """
-
 
 # ------------------ Llama3.1 Classifier ------------------
 
@@ -54,7 +53,7 @@ def llama3_1_classifier(
     scale_factor: int = 8,
 ) -> TransformerDecoder:
     """
-    Build the decoder associated with the Llama3.1 classification model. 
+    Build the decoder associated with the Llama3.1 classification model.
     This includes:
     - Token embeddings
     - num_layers number of TransformerSelfAttentionLayer blocks
@@ -87,7 +86,7 @@ def llama3_1_classifier(
     head_dim = embed_dim // num_heads
     num_kv_heads = num_kv_heads if num_kv_heads else num_heads
     rope = Llama3ScaledRoPE(dim=head_dim, max_seq_len=max_seq_len, base=rope_base, scale_factor=scale_factor)
-    
+
     layers = nn.ModuleList()
     for _ in range(num_layers):
         self_attn = MultiHeadAttention(
@@ -156,8 +155,8 @@ def lora_llama3_1_classifier(
     quantize_base: bool = False,
 ) -> TransformerDecoder:
     """
-    Return a version of Llama3.1 classifier (an instance of 
-    :func:`~torchtune.modules.TransformerDecoder`) with LoRA applied based on 
+    Return a version of Llama3.1 classifier (an instance of
+    :func:`~torchtune.modules.TransformerDecoder`) with LoRA applied based on
     the passed in configuration.
 
     Args:
@@ -203,7 +202,7 @@ def lora_llama3_1_classifier(
     hidden_dim = intermediate_dim if intermediate_dim else scale_hidden_dim_for_mlp(embed_dim)
     head_dim = embed_dim // num_heads
     rope = Llama3ScaledRoPE(dim=head_dim, max_seq_len=max_seq_len, base=rope_base, scale_factor=scale_factor)
-    
+
     layers = nn.ModuleList()
     for _ in range(num_layers):
         self_attn = lora_llama3_attention(
@@ -242,7 +241,7 @@ def lora_llama3_1_classifier(
             mlp_norm=RMSNorm(dim=embed_dim, eps=norm_eps),
         )
         layers.append(layer)
-        
+
     tok_embeddings = nn.Embedding(vocab_size, embed_dim)
 
     # TODO: quantize_base is not applied to final output_proj currently.
