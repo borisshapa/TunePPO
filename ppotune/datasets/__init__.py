@@ -6,7 +6,7 @@ from ppotune.datasets.gsm8k import (
     chat_gsm8k_dataset,
     plain_gsm8k_dataset,
 )
-from ppotune.datasets.alpaca_dataset import (
+from ppotune.datasets.alpaca import (
     alpaca_dataset,
 )
 
