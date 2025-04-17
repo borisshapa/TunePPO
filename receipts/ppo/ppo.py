@@ -139,6 +139,9 @@ class PPORecipe(FTRecipeInterface):
         # ppo loss epsilon
         self._epsilon = cfg.epsilon
 
+        # generation parameters
+        self._empty_cache = cfg.get("empty_cache_after_generation", False)
+
     def setup(self, cfg: DictConfig) -> None:
         """
         Sets up the recipe state correctly.
@@ -392,7 +395,11 @@ class PPORecipe(FTRecipeInterface):
             advantages          = advantage_trajectory.advantages,
         )
 
-    def generate_trajectory_batched(self, batch: dict) -> PPOTrajectoryStats:
+    def generate_trajectory_batched(
+        self,
+        batch: dict,
+        empty_cache: bool = False
+    ) -> PPOTrajectoryStats:
         """
         Generates a ``self.batch_size`` batch of trajectories using `self._forward_batch_size`
         batch sizes. See ``generate_trajectory`` for more details.
@@ -413,7 +420,7 @@ class PPORecipe(FTRecipeInterface):
                     batch_start : batch_start + self._forward_batch_size
                 ]
             trajectories.append(self.generate_trajectory(subbatch))
-            torch.cuda.empty_cache()
+            torch.cuda.empty_cache() if empty_cache else None
 
         trajectory = PPOTrajectoryStats(*map(torch.cat, zip(*trajectories)))
         wandb_logger.collect_dict({
@@ -440,7 +447,7 @@ class PPORecipe(FTRecipeInterface):
 
             for _, batch in enumerate(self._dataloader):
 
-                trajectory = self.generate_trajectory_batched(batch)
+                trajectory = self.generate_trajectory_batched(batch, self._empty_cache)
                 # optimize with PPO objective over multiple epochs
                 for _ in range(self._ppo_epochs):
                     batch_idxs = torch.randperm(self.batch_size, device=self._device)

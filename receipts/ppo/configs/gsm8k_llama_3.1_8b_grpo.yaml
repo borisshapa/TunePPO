@@ -98,6 +98,10 @@ advantage:
 seed: 0xD1CE
 shuffle: True
 
+# reduces training performance but helps a lot with CUDA OOMs and invalid
+# memory access errors in tight memoty setup
+# empty_cache_after_generation: True
+
 optimizer:
   _component_: bitsandbytes.optim.PagedAdamW
   lr: 1e-4
