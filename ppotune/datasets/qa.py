@@ -28,6 +28,7 @@ class QADataset(Dataset):
         *,
         source: str,
         sample_transform: QATransform,
+        filter_fn: tp.Optional[tp.Callable] = None,
         system_prompt: tp.Optional[str] = None,
         prompt_template: tp.Optional[PromptTemplate] = None,
         add_generation_prompt: bool = False,
@@ -40,6 +41,8 @@ class QADataset(Dataset):
         self.prompt_template = prompt_template
         self.add_generation_prompt = add_generation_prompt
         self.data = load_dataset(source, **load_dataset_kwargs)
+        if filter_fn is not None:
+            self.data = self.data.filter(filter_fn)
 
     def __len__(self):
         return len(self.data)

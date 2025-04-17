@@ -38,14 +38,12 @@ class TextCompletionDataset(Dataset):
         tokenizer: PreTrainedTokenizerBase,
         source: str,
         column: str = "text",
-        truncation: bool = True,
         filter_fn: Optional[Callable] = None,
         **load_dataset_kwargs: Dict[str, Any],
     ) -> None:
         self._tokenizer = tokenizer
         self._data = load_dataset(source, **load_dataset_kwargs)
         self._column = column
-        self._truncation = truncation
 
         if filter_fn is not None:
             self._data = self._data.filter(filter_fn)
@@ -94,7 +92,6 @@ def text_completion_dataset(
             for Hugging Face datasets or tabular data. For local datasets with a single column
             (e.g. unstructured txt files), use the default "text" which is used by Hugging Face datasets
             when loaded into memory. Default is "text".
-        add_eos (bool): Whether to add an EOS token to the end of the sequence. Default is True.
         split (str): ``split`` argument for ``datasets.load_dataset``. You can use this argument to load a subset
             of a given split, e.g. ``split="train[:10%]"``. Default is "train".
         filter_fn (Optional[Callable]): callable used to filter the dataset prior to any pre-processing. See
@@ -109,7 +106,6 @@ def text_completion_dataset(
         ...   source="allenai/c4",
         ...   column="text",
         ...   data_dir="realnewslike",
-        ...   packed=False,
         ...   split="train",
         ... )
 
@@ -120,12 +116,10 @@ def text_completion_dataset(
             source: allenai/c4
             column: text
             data_dir: realnewslike
-            packed: False
             split: train
 
     Returns:
-        Union[TextCompletionDataset, PackedDataset]: the configured :class:`~torchtune.datasets.TextCompletionDataset`
-            or :class:`~torchtune.datasets.PackedDataset` if ``packed=True``
+        TextCompletionDataset: the configured :class:`~torchtune.datasets.TextCompletionDataset`
     """
 
     ds = TextCompletionDataset(
