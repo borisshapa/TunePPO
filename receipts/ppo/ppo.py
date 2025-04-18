@@ -44,7 +44,7 @@ from ppotune.peft import (
     merge_lora_adapter,
     clear_lora_adapter,
 )
-from ppotune.utils import grad_norm, pretty_decode
+from ppotune.utils import grad_norm
 
 log = utils.get_logger("DEBUG")
 wandb_logger = WandbLogger()
@@ -168,7 +168,7 @@ class PPORecipe(FTRecipeInterface):
         with training.set_default_dtype(self._dtype), self._device:
             self.policy: GenerativeLoRAModel = nested_instantiate(
                 cfg.policy,
-                pad_id=self._tokenizer.pad_id,
+                tokenizer=self._tokenizer,
                 rng=self._rng
             )
             self.advantage: IAdvantageModel = nested_instantiate(cfg.advantage)
@@ -330,61 +330,55 @@ class PPORecipe(FTRecipeInterface):
         """
         query_len = batch["tokens"].shape[1]
 
-        # generate responses and logits
-        tokens, logits = self.policy.generate(prompt=batch["tokens"])
+        generated = self.policy.generate(prompt=batch["tokens"])
 
-        tokens_pad_mask = tokens != self._tokenizer.pad_id
-
-        responses = tokens[:, query_len:]
-        # pad responses after eos token
-        eos_mask = (responses == self._tokenizer.eos_id)
-        seen_eos = torch.cumsum(eos_mask, dim=1)
-        responses_pad_mask = (seen_eos > 1) | ((seen_eos == 1) & ~eos_mask)
-
-        # create attention masks and position IDs for follow up generation
+        tokens_mask = generated.query_mask | generated.response_mask
+        # create attention masks and position IDs for future forwards
         causal_mask = generation.get_causal_mask_from_padding_mask(
-            tokens_pad_mask
+            tokens_mask
         )
         position_ids = generation.get_position_ids_from_padding_mask(
-            tokens_pad_mask
+            tokens_mask
         )
 
         # generate reference logits
         with disable_adapter(self.policy):
-            ref_logits = self._ref_policy(
-                tokens,
+            reference_logits = self._ref_policy(
+                generated.tokens,
                 input_pos=position_ids,
                 mask=causal_mask
             )
-        ref_logits = ref_logits[:, query_len - 1 : -1]
+        reference_logits = reference_logits[:, query_len - 1 : -1]
+
+        responses = generated.tokens[:, query_len:]
+        responses_pad_mask = ~ generated.response_mask[:, query_len:]
 
         # estimate logprobs of the responses w.r.t. generation policy
-        gen_logprobs = rlhf.logits_to_logprobs(logits, responses, self.policy._temperature)
+        gen_logprobs = self.policy.logits_to_logprobs(generated.logits, responses)
         gen_logprobs[responses_pad_mask] = 1.0
-        del logits
 
         # estimate logprobs of the responses w.r.t. reference policy
-        ref_logprobs = rlhf.logits_to_logprobs(ref_logits, responses, self.policy._temperature)
+        ref_logprobs = self.policy.logits_to_logprobs(reference_logits, responses)
         ref_logprobs[responses_pad_mask] = 1.0
-        del ref_logits
 
         advantage_trajectory: AdvantageTrajectoryStats = self.advantage(
-            tokens          = tokens,
+            tokens          = generated.tokens,
             causal_mask     = causal_mask,
             position_ids    = position_ids,
-            responses_pad_mask  = responses_pad_mask,
+            responses_pad_mask = responses_pad_mask,
             gen_logprobs = gen_logprobs,
             ref_logprobs = ref_logprobs,
             batch=batch
         )
-        sample_completion = pretty_decode(
-            self._tokenizer, tokens[0].clone(), responses_pad_mask[0]
+        sample_completion = self._tokenizer.decode(
+            generated.tokens[0][tokens_mask[0]].tolist(),
+            skip_special_tokens=False
         )
         wandb_logger.collect_completion(
             sample_completion, advantage_trajectory.rewards[0].sum()
         )
         return PPOTrajectoryStats(
-            query_responses     = tokens,
+            query_responses     = generated.tokens,
             causal_mask         = causal_mask,
             position_ids        = position_ids,
             responses_pad_mask  = responses_pad_mask,
@@ -445,8 +439,7 @@ class PPORecipe(FTRecipeInterface):
             # trained on non-overlapping data.
             self._sampler.set_epoch(0)
 
-            for _, batch in enumerate(self._dataloader):
-
+            for batch in self._dataloader:
                 trajectory = self.generate_trajectory_batched(batch, self._empty_cache)
                 # optimize with PPO objective over multiple epochs
                 for _ in range(self._ppo_epochs):
