@@ -1,0 +1,136 @@
+# Config for single device RLHF (Q)LoRA GRPO finetuning of Mistral 7B model.
+#
+# This config uses hyperparameters based on small set of experiments and information
+# available from existing implementations.
+#
+# This config assumes that you've run the following commands before launching
+# this run: (take a look what prefix is down the config)
+# Download the policy model
+#   a. (Base) tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-0.2-7B-Base/
+#   b. (Instruct) tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-0.2-7B-Instruct/
+#
+# You'll also need to ensure that {output_dir} exists beforehand, as checkpoints for policy and
+# value models as well as WandBLogger logs are saved in sub-folders.
+#
+# To launch on N devices (starting from 1), run the following command from repo root:
+#   tune run --nproc_per_node N receipts/ppo/ppo.py --config receipts/ppo/configs/gsm8k_llama_3.1_8b_ppo.yaml
+#
+
+# NOTE: Use full paths only. '~' would not expand.
+# NOTE: Do not override from CLI variables other variables depend on. The dependants would not be
+# updated.
+
+
+# Change those to your preference. Do not do that via CLI!
+prefix: /home/optteam/.tune
+
+project: GSM8K
+group: Mistral-0.2-7B-Instruct-GRPO
+model: Mistral-0.2-7B-Instruct
+# group: Mistral-0.2-7B-Base-GRPO
+# model: Mistral-0.2-7B-Base
+run: GRPO
+
+output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
+
+# Tokenizer
+tokenizer:
+  _component_: ppotune.tokenizers.mistral2_tokenizer
+  path: ${prefix}/models/${model}/tokenizer.model
+  max_seq_len: 2500
+
+# Dataset
+dataset:
+  _component_: ppotune.datasets.chat_gsm8k_dataset
+  # _component_: ppotune.datasets.plain_gsm8k_dataset
+  split: train
+
+# Batch parameters
+batch_size: 64
+group_size: 8
+num_steps: 10000
+ppo_epochs: 2
+ppo_batch_size: 32
+gradient_accumulation_steps: 4 # Use to increase effective batch size
+forward_batch_size: 8
+
+# Policy / Reference Policy when adapter disabled
+policy:
+  _component_: ppotune.model.GenerativeLoRAModel
+  generation_batch_size: ${forward_batch_size}
+  max_seq_len: ${tokenizer.max_seq_len}
+  max_generated_tokens: 250
+  temperature: 0.7
+  top_k: null
+  model:
+    _component_: torchtune.models.mistral.lora_mistral_7b
+    # (Q)LoRA
+    lora_attn_modules: ['q_proj', 'k_proj', 'v_proj', 'output_proj']
+    apply_lora_to_mlp: True
+    apply_lora_to_output: False
+    lora_rank: 64  # higher increases accuracy and memory
+    lora_alpha: 16  # usually alpha=2*rank
+    lora_dropout: 0.0
+    quantize_base: False # stands for 'Q' in QLoRA
+  ckpt:
+    _component_: torchtune.training.FullModelHFCheckpointer
+    checkpoint_dir: ${prefix}/models/${model}/
+    checkpoint_files:
+      [
+        "model-00001-of-00003.safetensors",
+        "model-00002-of-00003.safetensors",
+        "model-00003-of-00003.safetensors",
+      ]
+    # this is the only place where you should update `recipe_checkpoint` if resuming training
+    recipe_checkpoint: null
+    output_dir: ${output_dir}/policy
+    model_type: MISTRAL
+
+advantage:
+  _component_: ppotune.advantage.GRAE
+  group_size: ${group_size}
+  reward:
+    _component_: ppotune.reward.DeepSeekMathRewardModel
+
+seed: 0xD1CE
+shuffle: True
+
+# reduces training performance but helps a lot with CUDA OOMs and invalid
+# memory access errors in tight memoty setup
+# empty_cache_after_generation: True
+
+optimizer:
+  _component_: bitsandbytes.optim.PagedAdamW
+  lr: 1e-4
+
+dtype: bf16 # | fp32 | fp16 is not supported
+
+sampler:
+  _component_: ppotune.sample.StickyDistributedSampler
+  num_duplicates: ${group_size}
+
+kl_penalty:
+  _component_: ppotune.loss.KLPenalty
+  coeff: 0.01
+
+reference_model:
+  _component_: ppotune.dist.DistributedPolicyMixture
+  # Regulates probability mass given to self-reference acc. to formula
+  # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
+  # Needed in cooperative setup. In single-agent setup set to null
+  self_preference: null
+
+# PPO Loss
+# clipping hyperparameter
+epsilon: 0.2
+
+# Logging
+wandb_logger:
+  dir: ${prefix}
+  entity: RADFAN
+  project: ${project}
+  group: ${group}
+  name: ${model}-${run}
+
+log_every_n_steps: 1
+update_ref_policy_every_n_steps: 13
