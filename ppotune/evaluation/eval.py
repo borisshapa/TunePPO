@@ -1,8 +1,8 @@
 import typing as tp
 import torch
+import torch.distributed as dist
 
 from tqdm import tqdm
-from torch import Generator
 from torch.utils.data import RandomSampler, DataLoader, Dataset
 from torchtune.modules.transforms.tokenizers import ModelTokenizer
 from ppotune.arbiters.pairwise_arbiter import PairwiseArbiter
@@ -76,7 +76,7 @@ class ReferenceCompletionEvaluator(Evaluator):
         decode = lambda tokens: self._tokenizer.decode(
             tokens.tolist(), skip_special_tokens=True
         )
-        for batch in tqdm(self._dataloader, desc="Evaluation"):
+        for batch in tqdm(self._dataloader, desc="Evaluation", disable=dist.get_rank() != 0):
             batch["tokens"] = batch["tokens"].to(model._device)
             generated = model.generate(prompt=batch["tokens"])
 

@@ -448,7 +448,12 @@ class PPORecipe(FTRecipeInterface):
         self._optimizer.zero_grad()
 
         training_completed = False
-        pbar = tqdm(total=self._total_steps, initial=self._steps_run, desc="Train")
+        pbar = tqdm(
+            total=self._total_steps,
+            initial=self._steps_run,
+            desc="Train",
+            disable=dist.get_rank() != 0
+        )
 
         for curr_epoch in range(self._epochs_run, self._total_epochs):
             # Ensure data is not reshuffled at new epoch so the agents are
