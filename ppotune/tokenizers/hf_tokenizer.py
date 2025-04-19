@@ -50,5 +50,6 @@ def hf_tokenizer(
     tokenizer.pad_id = tokenizer.pad_token_id
     tokenizer.eos_id = tokenizer.eos_token_id
     tokenizer.tokenize_messages = MethodType(tokenize_messages, tokenizer)
+    tokenizer.max_seq_len = max_seq_len
 
     return tokenizer

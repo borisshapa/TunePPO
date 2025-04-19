@@ -1,5 +1,6 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
+import typing as tp
 
 import math
 import sys
@@ -15,7 +16,7 @@ import torch.distributed as dist
 from omegaconf import DictConfig
 from torch import nn
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.sampler import Sampler
 
 from torchtune import config, generation, rlhf, training, utils
@@ -37,6 +38,7 @@ from ppotune.datatypes import (
 )
 from ppotune.datasets.utils import LeftPadCollator
 from ppotune.dist import DistributedPolicyMixture
+from ppotune.evaluation import Evaluator
 from ppotune.loss import KLPenalty
 from ppotune.log import WandbLogger
 from ppotune.model import GenerativeLoRAModel
@@ -164,6 +166,17 @@ class PPORecipe(FTRecipeInterface):
             batch_size  = cfg.batch_size,
         )
         self._setup_batch_sizes(cfg)
+
+        # setup evaluation
+        evaluation_dataset: tp.Optional[Dataset] = config.instantiate(
+            cfg.evaluation_dataset,
+            tokenizer=self._tokenizer
+        )
+        self.eval: tp.Optional[Evaluator] = nested_instantiate(
+            cfg.evaluator,
+            dataset     = evaluation_dataset,
+            batch_size  = self._forward_batch_size,
+        )
         # under chosen dtype on local device
         with training.set_default_dtype(self._dtype), self._device:
             self.policy: GenerativeLoRAModel = nested_instantiate(
@@ -432,7 +445,7 @@ class PPORecipe(FTRecipeInterface):
         self._optimizer.zero_grad()
 
         training_completed = False
-        pbar = tqdm(total=self._total_steps, initial=self._steps_run)
+        pbar = tqdm(total=self._total_steps, initial=self._steps_run, desc="Train")
 
         for curr_epoch in range(self._epochs_run, self._total_epochs):
             # Ensure data is not reshuffled at new epoch so the agents are
@@ -473,6 +486,10 @@ class PPORecipe(FTRecipeInterface):
                         self.global_step += 1
 
                 self._steps_run += 1
+
+                if self.eval:
+                    self.eval(self.policy, self._steps_run)
+
                 wandb_logger.flush(step=self.global_step)
                 self.cleanup_after_step(trajectory)
 

@@ -32,7 +32,7 @@ project: TLDR
 group: Base-PPO
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: Mistral-7B-RM
-run: PPO
+run: PPO-Eval
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
@@ -51,6 +51,10 @@ dataset:
   column: prompt
   add_eos: False
 
+evaluation_dataset:
+  _component_: ppotune.datasets.tldr_dataset
+  split: validation
+
 # Batch parameters
 batch_size: 64
 group_size: 1 # needed in GRPO. just leave it as is.
@@ -59,6 +63,13 @@ ppo_epochs: 2
 ppo_batch_size: 32
 gradient_accumulation_steps: 4 # Use to increase effective batch size
 forward_batch_size: 8
+
+evaluator:
+  _component_: ppotune.evaluation.reference_completion_evaluator
+  arbiter:
+    _component_: ppotune.arbiters.random_pairwise_arbiter
+  num_samples: 128 # better be divisible by forward_batch_size
+  every_n_steps: 13
 
 # Policy / Reference Policy when adapter disabled
 policy:
