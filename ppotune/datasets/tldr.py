@@ -19,12 +19,13 @@ class TLDRTransform(TCTransform):
 def tldr_dataset(
     tokenizer: ModelTokenizer,
     *,
-    split: str,
+    source: str = "trl-lib/tldr",
+    split: str = "train",
     **load_dataset_kwargs: tp.Dict[str, tp.Any],
 ) -> TextCompletionDataset:
     return TextCompletionDataset(
         tokenizer=tokenizer,
-        source="trl-lib/tldr",
+        source=source,
         sample_transform=TLDRTransform(),
         split=split,
         **load_dataset_kwargs

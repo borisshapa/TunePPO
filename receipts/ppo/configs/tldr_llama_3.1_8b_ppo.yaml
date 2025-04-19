@@ -27,7 +27,7 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-prefix: /home/optteam/.tune
+prefix: /home/evgurovv/torchtune
 
 project: TLDR
 group: Llama-Base-PPO
@@ -46,14 +46,13 @@ tokenizer:
 
 # Dataset
 dataset:
-  _component_: ppotune.datasets.text_completion_dataset
+  _component_: ppotune.datasets.tldr_dataset
   source: RLHF-And-Friends/tldr-ppo
-  # source: trl-lib/tldr
   split: train
-  column: prompt
 
 evaluation_dataset:
   _component_: ppotune.datasets.tldr_dataset
+  source: RLHF-And-Friends/tldr-ppo
   split: validation
 
 # Evaluator
