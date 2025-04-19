@@ -1,7 +1,11 @@
-from ppotune.arbiters.pairwise import (
-    random_pairwise_arbiter
+from ppotune.arbiters.default_arbiter import (
+    default_arbiter
+)
+from ppotune.arbiters.tldr_arbiter import (
+    tldr_arbiter
 )
 
 __all__ = [
-    "random_pairwise_arbiter",
+    "default_arbiter",
+    "tldr_arbiter",
 ]
