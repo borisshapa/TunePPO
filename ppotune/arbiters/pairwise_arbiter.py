@@ -41,24 +41,20 @@ class RemotePairwiseArbiter:
     deepinfra.
 
     Args:
+        system prompt:
+            the model will be prompted to judge completions using this prompt.
         base_url:
             url for the inference service. If you do not want to use 
             OpenAI set this to something else (or OpenAI will be used by
             default).
         model:
-            which model to use.
-        api_key:
-            set API key here if you by any chanche do not want to use
-            environment variables.
-        system prompt:
-            the model will be prompted to judge completions using this prompt.
-            Defaults to `DEFAULT_PAIRWISE_SYSTEM_PROMPT`.
+            which model to use. Defaults to "gpt-4o-mini".
     """
     def __init__(
         self,
+        system_prompt: str,
         base_url: tp.Optional[str] = None,
         model: str = "gpt-4o-mini",
-        system_prompt: tp.Optional[str] = None
     ) -> None:
         self._client = OpenAI(base_url=base_url)
         self._model = model
@@ -96,14 +92,14 @@ class RemotePairwiseArbiter:
         """
         Get the rank for a single prompt.
         """
-        content = self.system_prompt.format(
+        content = self._system_prompt.format(
             prompt=prompt,
             response0=candidates[0],
             response1=candidates[1]
         )
         messages = [{"role": "user", "content": content}]
-        completion = self.client.chat.completions.create(
-            model=self.model,
+        completion = self._client.chat.completions.create(
+            model=self._model,
             messages=messages,
             max_tokens=1
         )
@@ -111,7 +107,7 @@ class RemotePairwiseArbiter:
         if response in ["0", "1"]:
             return int(response)
         else:
-            logging.debug(
+            logging.warning(
                 f"Invalid response from the judge model: '{response}'. Returning -1."
             )
             return -1

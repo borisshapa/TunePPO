@@ -5,7 +5,7 @@ from tqdm import tqdm
 from torch import Generator
 from torch.utils.data import RandomSampler, DataLoader, Dataset
 from torchtune.modules.transforms.tokenizers import ModelTokenizer
-from ppotune.arbiters.pairwise import PairwiseArbiter
+from ppotune.arbiters.pairwise_arbiter import PairwiseArbiter
 from ppotune.datasets.utils import LeftPadCollator
 from ppotune.log import WandbLogger
 from ppotune.model import GenerativeModel
