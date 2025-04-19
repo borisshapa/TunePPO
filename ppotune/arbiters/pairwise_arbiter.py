@@ -30,21 +30,25 @@ class PairwiseArbiter(ABC):
                 list of tuple pairs with completions for given prompts.
             shuffle_order:
                 whether to shuffle completions before passing them to the
-                underlying model. 
+                underlying model.
+        Returns:
+            list of [-1/0/1] where -1 denotes invalid result, 0 denotes win of
+            0th completion and 1 denotes win of 1st completion in a tuple for
+            each tuple in completions list.
         """
         raise NotImplementedError("Arbiters must override .judge(...) method.")
 
 
-class RemotePairwiseArbiter:
+class RemotePairwiseArbiter(PairwiseArbiter):
     """
-    Pairwise arbiter class for remote inference services like OpneAI or 
+    Pairwise arbiter class for remote inference services like OpneAI or
     deepinfra.
 
     Args:
         system prompt:
             the model will be prompted to judge completions using this prompt.
         base_url:
-            url for the inference service. If you do not want to use 
+            url for the inference service. If you do not want to use
             OpenAI set this to something else (or OpenAI will be used by
             default).
         model:
@@ -72,7 +76,7 @@ class RemotePairwiseArbiter:
         if shuffle_order:
             flip_mask = np.random.choice([True, False], size=len(prompts))
             completions = [
-                (pair[1], pair[0]) if flip else pair 
+                (pair[1], pair[0]) if flip else pair
                 for flip, pair in zip(flip_mask, completions)
             ]
 

@@ -92,7 +92,8 @@ class ReferenceCompletionEvaluator(Evaluator):
             completions.extend(list(zip(batch["completion"], responses)))
 
         wins = self._arbiter.judge(prompts, completions)
-        winrate = torch.tensor(wins).float().mean()
+        valid = wins != -1
+        winrate = torch.tensor(wins[valid]).float().mean()
         logger.collect("winrate", winrate)
 
 
