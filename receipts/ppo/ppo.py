@@ -121,6 +121,9 @@ class PPORecipe(FTRecipeInterface):
         self._device = utils.get_device("cuda")
         self._dtype = training.get_dtype(cfg.dtype, device=self._device)
 
+        # if dist.get_rank() % 2 == 0:
+        #     torch.cuda.set_per_process_memory_fraction(0.5, device=self._device)
+
         # checkpointing attributes
         self._output_dir = cfg.output_dir
 
@@ -169,11 +172,11 @@ class PPORecipe(FTRecipeInterface):
 
         # setup evaluation
         evaluation_dataset: tp.Optional[Dataset] = config.instantiate(
-            cfg.evaluation_dataset,
+            cfg.get("evaluation_dataset", None),
             tokenizer=self._tokenizer
         )
         self.eval: tp.Optional[Evaluator] = nested_instantiate(
-            cfg.evaluator,
+            cfg.get("evaluator", None),
             dataset     = evaluation_dataset,
             batch_size  = self._forward_batch_size,
         )

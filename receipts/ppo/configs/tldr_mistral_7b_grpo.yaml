@@ -7,6 +7,7 @@
 # this run: (take a look what prefix is down the config)
 # 1. Download a reward model
 #   a. (TLDR-RM) tune download RLHF-And-Friends/RM-TLDR-Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-RM/
+#   b. (TLDR-SmallSFT-RM) tune download RLHF-And-Friends/TLDR-Mistral-7B-SmallSFT-RM --output-dir ${prefix}/models/TLDR-Mistral-7B-SmallSFT-RM/
 # 2. Get Mistral-7B model
 #   a. (Base) tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-Base/
 #   b. (Instruct) tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct/
@@ -17,7 +18,7 @@
 # value models as well as WandBLogger logs are saved in sub-folders.
 #
 # To launch on N devices (starting from 1), run the following command from repo root:
-#   tune run receipts/ppo.py --nproc_per_node N --config receipts/ppo/configs/tldr_mistral_7b_grpo.yaml
+#   tune run --nproc_per_node N receipts/ppo/ppo.py --config receipts/ppo/configs/tldr_mistral_7b_grpo.yaml
 #
 
 # NOTE: Use full paths only. '~' would not expand.
@@ -26,12 +27,12 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-prefix: /home/optteam/.tune
+prefix: /home/evgurovv/torchtune
 
 project: TLDR
 group: Base-GRPO
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
-reward: Mistral-7B-RM
+reward: TLDR-Mistral-7B-SmallSFT-RM
 run: GRPO
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
@@ -50,6 +51,21 @@ dataset:
   split: train
   column: prompt
   add_eos: False
+
+evaluation_dataset:
+  _component_: ppotune.datasets.tldr_dataset
+  source: RLHF-And-Friends/tldr-ppo
+  split: validation
+
+# Evaluator
+evaluator:
+  _component_: ppotune.evaluation.reference_completion_evaluator
+  arbiter:
+    _component_: ppotune.arbiters.tldr_arbiter
+    base_url: https://api.deepinfra.com/v1/openai
+    model: meta-llama/Llama-3.3-70B-Instruct-Turbo
+  num_samples: 128 # better be divisible by forward_batch_size
+  every_n_steps: 13
 
 # Batch parameters
 batch_size: 64

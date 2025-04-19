@@ -33,10 +33,10 @@
 prefix: /home/evgurovv/torchtune
 
 project: TLDR
-group: Mistral-Base-PPO
+group: Mistral-Base-PPO-3x
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: TLDR-Mistral-7B-SmallSFT-RM # | TLDR-Mistral-7B-RM
-run: PPO-Eval
+run: PPO
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
@@ -70,7 +70,7 @@ evaluator:
 # Batch parameters
 batch_size: 64
 group_size: 1 # needed in GRPO. just leave it as is.
-num_steps: 10000
+num_steps: 30000
 ppo_epochs: 2
 ppo_batch_size: 32
 gradient_accumulation_steps: 4 # Use to increase effective batch size
