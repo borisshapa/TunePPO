@@ -392,11 +392,6 @@ class PPORecipe(FTRecipeInterface):
             ref_logprobs = ref_logprobs,
             batch=batch
         )
-        # update reference policy mixture weights
-        self._ref_policy._reducer = self_preferred_distributed_weighted_mean(
-            self_preference=self._self_preference,
-            self_weight=advantage_trajectory.rewards.sum()
-        )
         sample_completion = self._tokenizer.decode(
             generated.tokens[0][tokens_mask[0]].tolist(),
             skip_special_tokens=False
@@ -411,9 +406,10 @@ class PPORecipe(FTRecipeInterface):
             responses_pad_mask  = responses_pad_mask,
             gen_logprobs        = gen_logprobs,
             ref_logprobs        = ref_logprobs,
+            advantages          = advantage_trajectory.advantages,
             values              = advantage_trajectory.values,
             returns             = advantage_trajectory.returns,
-            advantages          = advantage_trajectory.advantages,
+            rewards             = advantage_trajectory.rewards,
         )
 
     def generate_trajectory_batched(
@@ -504,6 +500,11 @@ class PPORecipe(FTRecipeInterface):
 
                         self.global_step += 1
 
+                # update reference policy mixture weights
+                self._ref_policy._reducer = self_preferred_distributed_weighted_mean(
+                    self_preference=self._self_preference,
+                    self_weight=trajectory.rewards.sum()
+                )
                 self._steps_run += 1
 
                 if self.eval:

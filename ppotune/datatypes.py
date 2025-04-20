@@ -49,6 +49,7 @@ class PPOTrajectoryStats(tp.NamedTuple):
     ref_logprobs: torch.Tensor
 
     # advantage model stats
+    advantages: torch.Tensor
     values: torch.Tensor
     returns: torch.Tensor
-    advantages: torch.Tensor
+    rewards: torch.Tensor
