@@ -397,7 +397,7 @@ class PPORecipe(FTRecipeInterface):
             skip_special_tokens=False
         )
         wandb_logger.collect_completion(
-            sample_completion, advantage_trajectory.rewards[0].sum()
+            sample_completion, advantage_trajectory.scores[0]
         )
         return PPOTrajectoryStats(
             query_responses     = generated.tokens,
@@ -409,7 +409,7 @@ class PPORecipe(FTRecipeInterface):
             advantages          = advantage_trajectory.advantages,
             values              = advantage_trajectory.values,
             returns             = advantage_trajectory.returns,
-            rewards             = advantage_trajectory.rewards,
+            scores              = advantage_trajectory.scores,
         )
 
     def generate_trajectory_batched(
@@ -503,7 +503,7 @@ class PPORecipe(FTRecipeInterface):
                 # update reference policy mixture weights
                 self._ref_policy._reducer = self_preferred_distributed_weighted_mean(
                     self_preference=self._self_preference,
-                    self_weight=trajectory.rewards.sum()
+                    self_weight=trajectory.scores.mean()
                 )
                 self._steps_run += 1
 
