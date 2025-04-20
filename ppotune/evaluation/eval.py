@@ -36,6 +36,7 @@ class ReferenceCompletionEvaluator(Evaluator):
         arbiter: PairwiseArbiter,
         num_samples: int,
         every_n_steps: int,
+        seed: tp.Optional[int] = None,
         *, # the rest has to be defined in the recipe
         dataset: Dataset,
         batch_size: int,
@@ -45,9 +46,13 @@ class ReferenceCompletionEvaluator(Evaluator):
         self._tokenizer: ModelTokenizer = dataset.tokenizer
         self._every_n_steps = every_n_steps
 
+        if seed is None:
+            seed = torch.randint(2**32, (1,))
+
         sampler = RandomSampler(
             dataset,
             num_samples=num_samples,
+            generator=torch.Generator().manual_seed(seed)
         )
         collator = LeftPadCollator(
             tokens_key="tokens",
