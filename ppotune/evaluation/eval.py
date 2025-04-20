@@ -106,6 +106,7 @@ def reference_completion_evaluator(
         arbiter: PairwiseArbiter,
         num_samples: int,
         every_n_steps: int,
+        seed: tp.Optional[int] = None,
         *, # the rest has to be defined in the recipe
         dataset: Dataset,
         batch_size: int,
@@ -115,6 +116,7 @@ def reference_completion_evaluator(
         arbiter=arbiter,
         num_samples=num_samples,
         every_n_steps=every_n_steps,
+        seed=seed,
         dataset=dataset,
         batch_size=batch_size,
     )
