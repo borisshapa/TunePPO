@@ -27,7 +27,7 @@
 
 
 # Change those to your preference. Do not do that via CLI!
-prefix: /home/evgurovv/torchtune
+prefix: /home/evgurovv/.tune
 
 project: TLDR
 group: Base-GRPO
@@ -164,7 +164,7 @@ reference_model:
   # Regulates probability mass given to self-reference acc. to formula
   # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
   # Needed in cooperative setup. In single-agent setup set to null
-  self_preference: null
+  self_preference: 0.8
 
 # PPO Loss
 # clipping hyperparameter
