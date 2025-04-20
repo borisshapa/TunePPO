@@ -160,12 +160,10 @@ kl_penalty:
   _component_: ppotune.loss.KLPenalty
   coeff: 0.00
 
-reference_model:
-  _component_: ppotune.dist.DistributedPolicyMixture
-  # Regulates probability mass given to self-reference acc. to formula
-  # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
-  # Needed in cooperative setup. In single-agent setup set to null
-  self_preference: null 
+# Regulates probability mass given to self-reference acc. to formula
+# ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
+# Needed in cooperative setup. In single-agent setup set to null
+self_preference: 0.8
 
 # PPO Loss
 # clipping hyperparameter

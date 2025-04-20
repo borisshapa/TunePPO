@@ -37,7 +37,10 @@ from ppotune.datatypes import (
     AdvantageTrajectoryStats,
 )
 from ppotune.datasets.utils import LeftPadCollator
-from ppotune.dist import DistributedPolicyMixture
+from ppotune.dist import (
+    DistributedPolicyMixture,
+    self_preferred_distributed_weighted_mean
+)
 from ppotune.evaluation import Evaluator
 from ppotune.loss import KLPenalty
 from ppotune.log import WandbLogger
@@ -199,9 +202,12 @@ class PPORecipe(FTRecipeInterface):
                 self.advantage.parameters()
         ))
         # initialize reference policy
-        self._ref_policy: DistributedPolicyMixture = instantiate(
-            cfg.reference_model,
-            local_policy=self.policy
+        self._self_preference = cfg.self_preference
+        self._ref_policy = DistributedPolicyMixture(
+            local_policy=self.policy,
+            reducer = self_preferred_distributed_weighted_mean(
+                self_preference=self._self_preference
+            )
         )
         # instantiate kl penalty module
         self.kl: KLPenalty = instantiate(cfg.kl_penalty)
@@ -385,6 +391,11 @@ class PPORecipe(FTRecipeInterface):
             gen_logprobs = gen_logprobs,
             ref_logprobs = ref_logprobs,
             batch=batch
+        )
+        # update reference policy mixture weights
+        self._ref_policy._reducer = self_preferred_distributed_weighted_mean(
+            self_preference=self._self_preference,
+            self_weight=advantage_trajectory.rewards.sum()
         )
         sample_completion = self._tokenizer.decode(
             generated.tokens[0][tokens_mask[0]].tolist(),
