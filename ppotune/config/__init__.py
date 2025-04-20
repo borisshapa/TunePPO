@@ -1,5 +1,5 @@
-from ._instantiate import nested_instantiate
+from ._instantiate import instantiate
 
 __all__ = [
-    "nested_instantiate",
+    "instantiate",
 ]
