@@ -102,7 +102,11 @@ def distributed_weighted_mean(
 def self_preferred_mean(
     self_preference: tp.Optional[float] = None
 ) -> WeightedMean:
+
     if self_preference is None:
+        return mean()
+
+    if dist.get_world_size() == 1:
         return mean()
 
     other_preference = (1 - self_preference) / (dist.get_world_size() - 1)
