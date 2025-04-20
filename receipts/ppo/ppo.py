@@ -31,7 +31,7 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizerBase
 
 from ppotune.advantage import IAdvantageModel
-from ppotune.config import nested_instantiate
+from ppotune.config import instantiate
 from ppotune.datatypes import (
     PPOTrajectoryStats,
     AdvantageTrajectoryStats,
@@ -156,7 +156,7 @@ class PPORecipe(FTRecipeInterface):
         wandb_logger.log_config(cfg)
 
         # instantiate tokenizer
-        self._tokenizer: PreTrainedTokenizerBase | ModelTokenizer = config.instantiate(
+        self._tokenizer: PreTrainedTokenizerBase | ModelTokenizer = instantiate(
             cfg.tokenizer
         )
 
@@ -171,40 +171,40 @@ class PPORecipe(FTRecipeInterface):
         self._setup_batch_sizes(cfg)
 
         # setup evaluation
-        evaluation_dataset: tp.Optional[Dataset] = config.instantiate(
+        evaluation_dataset: tp.Optional[Dataset] = instantiate(
             cfg.get("evaluation_dataset", None),
             tokenizer=self._tokenizer
         )
-        self.eval: tp.Optional[Evaluator] = nested_instantiate(
+        self.eval: tp.Optional[Evaluator] = instantiate(
             cfg.get("evaluator", None),
             dataset     = evaluation_dataset,
             batch_size  = self._forward_batch_size,
         )
         # under chosen dtype on local device
         with training.set_default_dtype(self._dtype), self._device:
-            self.policy: GenerativeLoRAModel = nested_instantiate(
+            self.policy: GenerativeLoRAModel = instantiate(
                 cfg.policy,
                 tokenizer=self._tokenizer,
                 rng=self._rng
             )
-            self.advantage: IAdvantageModel = nested_instantiate(cfg.advantage)
+            self.advantage: IAdvantageModel = instantiate(cfg.advantage)
 
         self.policy.setup(cfg.policy)
         self.advantage.setup(cfg.advantage, tokenizer=self._tokenizer)
 
         # instantiate optimizer
-        self._optimizer: Optimizer = config.instantiate(
+        self._optimizer: Optimizer = instantiate(
             cfg.optimizer, chain(
                 self.policy.parameters(),
                 self.advantage.parameters()
         ))
         # initialize reference policy
-        self._ref_policy: DistributedPolicyMixture = config.instantiate(
+        self._ref_policy: DistributedPolicyMixture = instantiate(
             cfg.reference_model,
             local_policy=self.policy
         )
         # instantiate kl penalty module
-        self.kl: KLPenalty = config.instantiate(cfg.kl_penalty)
+        self.kl: KLPenalty = instantiate(cfg.kl_penalty)
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
         """
@@ -258,7 +258,7 @@ class PPORecipe(FTRecipeInterface):
                 f"group_size({self.group_size})."
             )
 
-        self._total_steps = cfg.num_steps // (self.batch_size * dist.get_world_size())
+        self._total_steps = cfg.num_steps // self.batch_size
 
         batches_per_epoch = max(
             1, len(self._dataloader)
@@ -298,11 +298,11 @@ class PPORecipe(FTRecipeInterface):
         """
         All data related setup happens here.
         """
-        dataset = config.instantiate(
+        dataset = instantiate(
             cfg_dataset,
             tokenizer=tokenizer
         )
-        sampler: Sampler = config.instantiate(
+        sampler: Sampler = instantiate(
             cfg_sampler,
             dataset=dataset,
             shuffle=shuffle,

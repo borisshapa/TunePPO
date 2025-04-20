@@ -63,11 +63,13 @@ def _instantiate_node(
             return _create_component(_component_, args, kwargs)
     elif isinstance(obj, list):
         return [_instantiate_node(item, caller_globals=caller_globals) for item in obj]
+    elif isinstance(obj, str):
+        return os.path.expanduser(obj)
     else:
         return obj
 
 
-def nested_instantiate(
+def instantiate(
     config: Union[Dict[str, Any], DictConfig],
     *args: Any,
     caller_globals: Optional[Dict[str, Any]] = None,

@@ -6,11 +6,11 @@
 # This config assumes that you've run the following commands before launching
 # this run: (take a look what prefix is down the config)
 # 1. Download a reward model
-#   a. (TLDR-RM) tune download RLHF-And-Friends/RM-TLDR-Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-RM/
-#   b. (TLDR-SmallSFT-RM) tune download RLHF-And-Friends/TLDR-Mistral-7B-SmallSFT-RM --output-dir ${prefix}/models/TLDR-Mistral-7B-SmallSFT-RM/
+#   a. (TLDR-RM) tune download RLHF-And-Friends/RM-TLDR-Mistral-7B-v0.2 --output-dir ~/.tune/models/Mistral-7B-RM/
+#   b. (TLDR-SmallSFT-RM) tune download RLHF-And-Friends/TLDR-Mistral-7B-SmallSFT-RM --output-dir ~/.tune/models/TLDR-Mistral-7B-SmallSFT-RM/
 # 2. Get Mistral-7B model
-#   a. (Base) tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-Base/
-#   b. (Instruct) tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct/
+#   a. (Base) tune download mistral-community/Mistral-7B-v0.2 --output-dir ~/.tune/models/Mistral-7B-Base/
+#   b. (Instruct) tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ~/.tune/models/Mistral-7B-Instruct/
 #   c. (SFT) tune download RLHF-And-Friends/SFT-TLDR-Mistral-7B-v0.2 --output-dir ~/.torchtune/models/Mistral-7B-SFT/
 #   d. (SmallSFT) tune download RLHF-And-Friends/TLDR-Mistral-7B-SmallSFT --output-dir ~/.torchtune/models/Mistral-7B-SmallSFT/
 #
@@ -20,14 +20,11 @@
 # To launch on N devices (starting from 1), run the following command from repo root:
 #   tune run --nproc_per_node N receipts/ppo/ppo.py --config receipts/ppo/configs/tldr_mistral_7b_grpo.yaml
 #
-
-# NOTE: Use full paths only. '~' would not expand.
 # NOTE: Do not override from CLI variables other variables depend on. The dependants would not be
 # updated.
 
 
-# Change those to your preference. Do not do that via CLI!
-prefix: /home/evgurovv/.tune
+prefix: ~/.tune
 
 project: TLDR
 group: Base-GRPO

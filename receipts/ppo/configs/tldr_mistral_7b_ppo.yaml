@@ -6,13 +6,13 @@
 # This config assumes that you've run the following commands before launching
 # this run: (take a look what prefix is down the config)
 # 1. Download a reward model
-#   a. (TLDR-RM) tune download RLHF-And-Friends/TLDR-Mistral-7B-RM --output-dir ${prefix}/models/TLDR-Mistral-7B-RM/
-#   b. (TLDR-SmallSFT-RM) tune download RLHF-And-Friends/TLDR-Mistral-7B-SmallSFT-RM --output-dir ${prefix}/models/TLDR-Mistral-7B-SmallSFT-RM/
+#   a. (TLDR-RM) tune download RLHF-And-Friends/TLDR-Mistral-7B-RM --output-dir ~/.tune/models/TLDR-Mistral-7B-RM/
+#   b. (TLDR-SmallSFT-RM) tune download RLHF-And-Friends/TLDR-Mistral-7B-SmallSFT-RM --output-dir ~/.tune/models/TLDR-Mistral-7B-SmallSFT-RM/
 # 2. Get Mistral-7B model
-#   a. (Base) tune download mistral-community/Mistral-7B-v0.2 --output-dir ${prefix}/models/Mistral-7B-Base/
-#   b. (Instruct) tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ${prefix}/models/Mistral-7B-Instruct/
-#   c. (SFT) tune download RLHF-And-Friends/SFT-TLDR-Mistral-7B-v0.2 --output-dir ~/.torchtune/models/Mistral-7B-SFT/
-#   d. (SmallSFT) tune download RLHF-And-Friends/TLDR-Mistral-7B-SmallSFT --output-dir ~/.torchtune/models/Mistral-7B-SmallSFT/
+#   a. (Base) tune download mistral-community/Mistral-7B-v0.2 --output-dir ~/.tune/models/Mistral-7B-Base/
+#   b. (Instruct) tune download mistralai/Mistral-7B-Instruct-v0.2 --output-dir ~/.tune/models/Mistral-7B-Instruct/
+#   c. (SFT) tune download RLHF-And-Friends/SFT-TLDR-Mistral-7B-v0.2 --output-dir ~/.tune/models/Mistral-7B-SFT/
+#   d. (SmallSFT) tune download RLHF-And-Friends/TLDR-Mistral-7B-SmallSFT --output-dir ~/.tune/models/Mistral-7B-SmallSFT/
 #
 # You'll also need to ensure that {output_dir} exists beforehand, as checkpoints for policy and
 # value models as well as WandBLogger logs are saved in sub-folders.
@@ -23,17 +23,15 @@
 # To use arbiters from 'OpenAI' or 'deepinfra' set the environment variable in advance:
 # export OPENAI_API_KEY=<your API key>.
 # Use this variable even if you use deepinfra.
-
-# NOTE: Use full paths only. '~' would not expand.
+#
 # NOTE: Do not override from CLI variables other variables depend on. The dependants would not be
 # updated.
 
 
-# Change those to your preference. Do not do that via CLI!
-prefix: /home/evgurovv/torchtune
+prefix: ~/.tune
 
 project: TLDR
-group: Mistral-Base-PPO-2x
+group: Mistral-Base-PPO
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: TLDR-Mistral-7B-SmallSFT-RM # | TLDR-Mistral-7B-RM
 run: PPO
@@ -71,7 +69,7 @@ evaluator:
 # Batch parameters
 batch_size: 64
 group_size: 1 # needed in GRPO. just leave it as is.
-num_steps: 20000
+num_steps: 10000
 ppo_epochs: 2
 ppo_batch_size: 32
 gradient_accumulation_steps: 4 # Use to increase effective batch size

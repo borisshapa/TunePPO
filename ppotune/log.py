@@ -25,11 +25,14 @@ class WandbLogger(MetricLoggerInterface):
         """
         Initialize wandb itself with separate runs for each device.
         """
+        if group := config.get("group"):
+            group = f"{group}-{dist.get_world_size()}x"
         if name := config.get("name"):
             name = f"{name}-{dist.get_rank()}/{dist.get_world_size() - 1}"
 
-        if not os.path.exists(config.dir):
-            os.makedirs(config.dir)
+        dir = os.path.expanduser(config.dir)
+        if not os.path.exists(dir):
+            os.makedirs(dir)
 
         self._log_buffer: tp.Dict[str, list[torch.Tensor]] = {}
 
@@ -37,10 +40,10 @@ class WandbLogger(MetricLoggerInterface):
             columns=["completion", "score"]
         )
         wandb.init(
-            dir=config.dir,
+            dir=dir,
             entity=config.entity,
             project=config.project,
-            group=config.group,
+            group=group,
             name=name,
         )
         # define default x-axis (for latest wandb versions)
