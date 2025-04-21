@@ -39,7 +39,7 @@ from ppotune.datatypes import (
 from ppotune.datasets.utils import LeftPadCollator
 from ppotune.dist import (
     DistributedPolicyMixture,
-    self_preferred_distributed_weighted_mean
+    self_preferred_distributed_softmax
 )
 from ppotune.evaluation import Evaluator
 from ppotune.loss import KLPenalty
@@ -205,7 +205,7 @@ class PPORecipe(FTRecipeInterface):
         self._self_preference = cfg.self_preference
         self._ref_policy = DistributedPolicyMixture(
             local_policy=self.policy,
-            reducer = self_preferred_distributed_weighted_mean(
+            reducer = self_preferred_distributed_softmax(
                 self_preference=self._self_preference
             )
         )
@@ -501,7 +501,7 @@ class PPORecipe(FTRecipeInterface):
                         self.global_step += 1
 
                 # update reference policy mixture weights
-                self._ref_policy._reducer = self_preferred_distributed_weighted_mean(
+                self._ref_policy._reducer = self_preferred_distributed_softmax(
                     self_preference=self._self_preference,
                     self_weight=trajectory.scores.mean()
                 )

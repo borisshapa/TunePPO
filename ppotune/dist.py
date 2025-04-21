@@ -62,7 +62,8 @@ class WeightedMean:
 
     @property
     def weights(self) -> torch.Tensor:
-        return torch.softmax(torch.tensor(self._weights), dim=0)
+        weights = torch.tensor(self._weights)
+        return weights / weights.sum()
 
     def __call__(
         self,
@@ -80,6 +81,7 @@ def mean() -> WeightedMean:
     weights = [1. / dist.get_world_size()] * dist.get_world_size()
     return WeightedMean(weights)
 
+
 def weighted_mean(
     weights: tp.Optional[tp.List[float]] = None
 ) -> WeightedMean:
@@ -89,6 +91,17 @@ def weighted_mean(
     return WeightedMean(weights)
 
 
+def softmax(
+    weights: tp.Optional[tp.List[float]] = None
+) -> WeightedMean:
+    if weights is None:
+        return mean()
+
+    weights = torch.softmax(torch.tensor(weights), dim=0)
+
+    return WeightedMean(weights.tolist())
+
+
 def distributed_weighted_mean(
     self_weight: tp.Optional[torch.Tensor]
 ) -> WeightedMean:
@@ -96,7 +109,17 @@ def distributed_weighted_mean(
         return mean()
 
     peer_weights = all_gather_even(self_weight)
-    return weighted_mean(torch.stack(peer_weights).tolist())
+    return weighted_mean(peer_weights)
+
+
+def distributed_softmax(
+    self_weight: tp.Optional[torch.Tensor]
+) -> WeightedMean:
+    if self_weight is None:
+        return mean()
+    
+    peer_weights = all_gather_even(self_weight)
+    return softmax(peer_weights)
 
 
 def self_preferred_mean(
@@ -131,6 +154,17 @@ def self_preferred_distributed_weighted_mean(
     distributed_weights = distributed_weighted_mean(self_weight).weights
     return weighted_mean((self_preferred_weights * distributed_weights).tolist())
 
+# -----------------------------------------------------------------------------
+
+def self_preferred_distributed_softmax(
+    self_preference: tp.Optional[float] = None,
+    self_weight: tp.Optional[torch.Tensor] = None,
+) -> WeightedMean:
+    self_preferred_weights = self_preferred_mean(self_preference).weights
+    distributed_softmax_weights = distributed_softmax(self_weight).weights
+    return weighted_mean(
+        (self_preferred_weights * distributed_softmax_weights).tolist()
+    )
 
 # ----------------------- Distributed Policy Mixture ------------------------ #
 class DistributedPolicyMixture:

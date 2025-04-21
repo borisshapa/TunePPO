@@ -31,7 +31,7 @@
 prefix: ~/.tune
 
 project: TLDR
-group: Mistral-Base-PPO
+group: Mistral-Base-PPO-SWR64т
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: TLDR-Mistral-7B-SmallSFT-RM # | TLDR-Mistral-7B-RM
 run: PPO
