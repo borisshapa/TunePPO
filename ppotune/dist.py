@@ -92,10 +92,14 @@ def weighted_mean(
 
 
 def softmax(
-    weights: tp.Optional[tp.List[float]] = None
+    weights: tp.Optional[tp.List[float]] = None,
+    temperature: tp.Optional[float] = None
 ) -> WeightedMean:
     if weights is None:
         return mean()
+
+    if temperature is not None:
+        weights /= temperature
 
     weights = torch.softmax(torch.tensor(weights), dim=0)
 
@@ -113,13 +117,14 @@ def distributed_weighted_mean(
 
 
 def distributed_softmax(
-    self_weight: tp.Optional[torch.Tensor]
+    self_weight: tp.Optional[torch.Tensor],
+    temperature: tp.Optional[float] = None,
 ) -> WeightedMean:
     if self_weight is None:
         return mean()
     
     peer_weights = all_gather_even(self_weight)
-    return softmax(peer_weights)
+    return softmax(peer_weights, temperature)
 
 
 def self_preferred_mean(
@@ -159,9 +164,10 @@ def self_preferred_distributed_weighted_mean(
 def self_preferred_distributed_softmax(
     self_preference: tp.Optional[float] = None,
     self_weight: tp.Optional[torch.Tensor] = None,
+    temperature: tp.Optional[float] = None,
 ) -> WeightedMean:
     self_preferred_weights = self_preferred_mean(self_preference).weights
-    distributed_softmax_weights = distributed_softmax(self_weight).weights
+    distributed_softmax_weights = distributed_softmax(self_weight, temperature).weights
     return weighted_mean(
         (self_preferred_weights * distributed_softmax_weights).tolist()
     )

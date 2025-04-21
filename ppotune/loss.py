@@ -15,7 +15,7 @@ class KLPenalty(nn.Module):
     """
     def __init__(self, coeff: float) -> None:
         super().__init__()
-        self._coeff = coeff
+        self._coeff = torch.tensor(coeff)
 
     def forward(
         self,

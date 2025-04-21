@@ -51,6 +51,8 @@ from ppotune.peft import (
 )
 from ppotune.utils import grad_norm
 
+from ppotune.schedulers.scheduler import Scheduler
+
 log = utils.get_logger("DEBUG")
 wandb_logger = WandbLogger()
 
@@ -203,6 +205,7 @@ class PPORecipe(FTRecipeInterface):
         ))
         # initialize reference policy
         self._self_preference = cfg.self_preference
+        self._weighting_temp = cfg.weighting_temp
         self._ref_policy = DistributedPolicyMixture(
             local_policy=self.policy,
             reducer = self_preferred_distributed_softmax(
@@ -211,6 +214,9 @@ class PPORecipe(FTRecipeInterface):
         )
         # instantiate kl penalty module
         self.kl: KLPenalty = instantiate(cfg.kl_penalty)
+        # instantiate kl scheduler
+        self._kl_scheduler: Scheduler = instantiate(cfg.scheduler)
+        self._kl_scheduler.add_param(self.kl._coeff)
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
         """
@@ -503,8 +509,10 @@ class PPORecipe(FTRecipeInterface):
                 # update reference policy mixture weights
                 self._ref_policy._reducer = self_preferred_distributed_softmax(
                     self_preference=self._self_preference,
-                    self_weight=trajectory.scores.mean()
+                    self_weight=trajectory.scores.mean(),
+                    temperature=self._weighting_temp,
                 )
+                self._kl_scheduler.step()
                 self._steps_run += 1
 
                 if self.eval:

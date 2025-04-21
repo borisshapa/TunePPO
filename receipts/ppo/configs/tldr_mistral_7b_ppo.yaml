@@ -31,7 +31,7 @@
 prefix: ~/.tune
 
 project: TLDR
-group: Mistral-Base-PPO-SWR64т
+group: Mistral-Base-PPO-SWR64
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: TLDR-Mistral-7B-SmallSFT-RM # | TLDR-Mistral-7B-RM
 run: PPO
@@ -117,7 +117,7 @@ advantage:
     min_response_len: 18      # would penalize generations shorter than
     penalise_no_eos: True     # would penalize generations with no eos
     reward_penalty: -3        # penalty value
-    kl_coeff: 0.01            # per token kl-penalty coefficient
+    kl_coeff: 0.03            # per token kl-penalty coefficient
     scorer:
       _component_: ppotune.model.LoRAModel
 
@@ -160,10 +160,17 @@ kl_penalty:
   _component_: ppotune.loss.KLPenalty
   coeff: 0.00
 
+kl_scheduler:
+  _component_: ppotune.schedulers.constant_scheduler
+  value: ${advantage.reward.kl_coeff}
+
 # Regulates probability mass given to self-reference acc. to formula
 # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
 # Needed in cooperative setup. In single-agent setup set to null
 self_preference: 0.8
+# Regulates temperature in `softmax` when obtaining weights for reweighting
+# policies in KL term
+weighting_temp: null 
 
 # PPO Loss
 # clipping hyperparameter

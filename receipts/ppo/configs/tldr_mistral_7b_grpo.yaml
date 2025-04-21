@@ -27,7 +27,7 @@
 prefix: ~/.tune
 
 project: TLDR
-group: Base-GRPO
+group: Mistral-Base-GRPO-SWR64
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: TLDR-Mistral-7B-SmallSFT-RM
 run: GRPO
@@ -42,12 +42,9 @@ tokenizer:
 
 # Dataset
 dataset:
-  _component_: torchtune.datasets.text_completion_dataset
-  # source: RLHF-And-Friends/tldr-ppo
-  source: trl-lib/tldr
+  _component_: ppotune.datasets.tldr_dataset
+  source: RLHF-And-Friends/tldr-ppo
   split: train
-  column: prompt
-  add_eos: False
 
 evaluation_dataset:
   _component_: ppotune.datasets.tldr_dataset
@@ -154,14 +151,19 @@ sampler:
 
 kl_penalty:
   _component_: ppotune.loss.KLPenalty
-  coeff: 0.01
+  coeff: 0.04
 
-reference_model:
-  _component_: ppotune.dist.DistributedPolicyMixture
-  # Regulates probability mass given to self-reference acc. to formula
-  # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
-  # Needed in cooperative setup. In single-agent setup set to null
-  self_preference: 0.8
+kl_scheduler:
+  _component_: ppotune.schedulers.constant_scheduler
+  value: ${kl_penalty.coeff}
+
+# Regulates probability mass given to self-reference acc. to formula
+# ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
+# Needed in cooperative setup. In single-agent setup set to null
+self_preference: 0.8
+# Regulates temperature in `softmax` when obtaining weights for reweighting
+# policies in KL term
+weighting_temp: null 
 
 # PPO Loss
 # clipping hyperparameter
