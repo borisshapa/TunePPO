@@ -513,6 +513,9 @@ class PPORecipe(FTRecipeInterface):
                     temperature=self._weighting_temp,
                 )
                 self._kl_scheduler.step()
+                wandb_logger.collect_dict(
+                    {"kl_coef": self.kl._coeff}
+                )
                 self._steps_run += 1
 
                 if self.eval:
