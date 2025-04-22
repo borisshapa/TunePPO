@@ -170,7 +170,7 @@ kl_scheduler:
 self_preference: 0.8
 # Regulates temperature in `softmax` when obtaining weights for reweighting
 # policies in KL term
-weighting_temp: null 
+weighting_temp: null
 
 # PPO Loss
 # clipping hyperparameter

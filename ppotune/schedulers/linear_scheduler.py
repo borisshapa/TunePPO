@@ -7,7 +7,8 @@ def linear_scheduler(
     initial_value: float,
     final_value: float,
     num_steps: int,
-    param: torch.Tensfor,
+    param: torch.Tensor,
+    **kwargs,
 ) -> Scheduler:
     linear_shedule_fn = (
         lambda step:

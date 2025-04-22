@@ -27,7 +27,7 @@
 prefix: ~/.tune
 
 project: TLDR
-group: Mistral-Base-GRPO-SWR64
+group: Mistral-Base-GRPO-SWR64-Linear-Scheduling
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: TLDR-Mistral-7B-SmallSFT-RM
 run: GRPO
@@ -151,11 +151,12 @@ sampler:
 
 kl_penalty:
   _component_: ppotune.loss.KLPenalty
-  coeff: 0.04
+  coeff: 0.01
 
 kl_scheduler:
-  _component_: ppotune.schedulers.constant_scheduler
-  value: ${kl_penalty.coeff}
+  _component_: ppotune.schedulers.linear_scheduler
+  initial_value: ${kl_penalty.coeff}
+  final_value: 0.1
 
 # Regulates probability mass given to self-reference acc. to formula
 # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
