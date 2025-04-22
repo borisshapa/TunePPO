@@ -69,7 +69,7 @@ class ReferenceCompletionEvaluator(Evaluator):
     def __call__(
         self,
         model: GenerativeModel,
-        step: int,
+        step: int = 0,
     ) -> None:
 
         if step % self._every_n_steps != 0:

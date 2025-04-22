@@ -215,7 +215,7 @@ class PPORecipe(FTRecipeInterface):
         # instantiate kl penalty module
         self.kl: KLPenalty = instantiate(cfg.kl_penalty)
         # instantiate kl scheduler
-        self._kl_scheduler: Scheduler = instantiate(cfg.scheduler)
+        self._kl_scheduler: Scheduler = instantiate(cfg.kl_scheduler)
         self._kl_scheduler.add_param(self.kl._coeff)
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
@@ -467,6 +467,8 @@ class PPORecipe(FTRecipeInterface):
             desc="Train",
             disable=dist.get_rank() != 0
         )
+        if self.eval:
+            self.eval(self.policy)
 
         for curr_epoch in range(self._epochs_run, self._total_epochs):
             # Ensure data is not reshuffled at new epoch so the agents are

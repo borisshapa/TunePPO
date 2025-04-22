@@ -22,7 +22,7 @@ class Scheduler:
         self._param = None
         self._schedule_fn = schedule_fn
         self._cur_step = 0
-        
+
     def add_param(self, param: torch.Tensor) -> None:
         self._param = param
 

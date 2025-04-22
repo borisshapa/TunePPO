@@ -7,8 +7,8 @@ def linear_scheduler(
     num_steps: int
 ) -> Scheduler:
     linear_shedule_fn = (
-        lambda step: 
-            initial_value + 
+        lambda step:
+            initial_value +
             (final_value - initial_value) / (num_steps - 1) * step
     )
 
