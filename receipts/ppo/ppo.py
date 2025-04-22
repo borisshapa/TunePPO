@@ -391,6 +391,10 @@ class PPORecipe(FTRecipeInterface):
         ref_logprobs = self.policy.logits_to_logprobs(reference_logits, responses)
         ref_logprobs[responses_pad_mask] = 1.0
 
+        # log generative | reference model divergence
+        kl = (gen_logprobs - ref_logprobs).sum(1)
+        wandb_logger.collect("kl", kl)
+
         advantage_trajectory: AdvantageTrajectoryStats = self.advantage(
             tokens          = generated.tokens,
             causal_mask     = causal_mask,

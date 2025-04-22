@@ -157,7 +157,6 @@ class PerTokenKLPenalizedRewardModel(LLMRewardModel):
         )
         logger.collect_dict({
             "rlhf_reward": scores + kl_rewards.sum(1),
-            "kl": kl.sum(1),
             "kl_reward": kl_rewards.sum(1),
         })
         return rewards

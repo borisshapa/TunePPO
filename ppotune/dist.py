@@ -122,7 +122,7 @@ def distributed_softmax(
 ) -> WeightedMean:
     if self_weight is None:
         return mean()
-    
+
     peer_weights = all_gather_even(self_weight)
     return softmax(peer_weights, temperature)
 
