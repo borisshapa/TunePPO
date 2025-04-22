@@ -215,8 +215,10 @@ class PPORecipe(FTRecipeInterface):
         # instantiate kl penalty module
         self.kl: KLPenalty = instantiate(cfg.kl_penalty)
         # instantiate kl scheduler
-        self._kl_scheduler: Scheduler = instantiate(cfg.kl_scheduler)
-        self._kl_scheduler.add_param(self.kl._coeff)
+        self._kl_scheduler: Scheduler = instantiate(
+            cfg.kl_scheduler,
+            param=self.kl._coeff
+        )
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
         """
@@ -515,9 +517,6 @@ class PPORecipe(FTRecipeInterface):
                     temperature=self._weighting_temp,
                 )
                 self._kl_scheduler.step()
-                wandb_logger.collect_dict(
-                    {"kl_coef": self.kl._coeff}
-                )
                 self._steps_run += 1
 
                 if self.eval:
