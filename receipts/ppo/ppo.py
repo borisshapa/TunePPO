@@ -218,7 +218,7 @@ class PPORecipe(FTRecipeInterface):
         self._kl_scheduler: Scheduler = instantiate(
             cfg.kl_scheduler,
             param=self.kl._coeff,
-            num_steps = cfg.num_steps // self.batch_size,
+            num_steps = self._total_steps,
         )
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
