@@ -110,14 +110,20 @@ sampler:
 
 kl_penalty:
   _component_: ppotune.loss.KLPenalty
-  coeff: 0.01
+  coeff: 0.04
 
-reference_model:
-  _component_: ppotune.dist.DistributedPolicyMixture
-  # Regulates probability mass given to self-reference acc. to formula
-  # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
-  # Needed in cooperative setup. In single-agent setup set to null
-  self_preference: null
+kl_scheduler:
+  _component_: ppotune.schedulers.linear_scheduler
+  initial_value: ${kl_penalty.coeff}
+  final_value: ${kl_penalty.coeff}
+
+# Regulates probability mass given to self-reference acc. to formula
+# ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
+# Needed in cooperative setup. In single-agent setup set to null
+self_preference: 0.8
+# Regulates temperature in `softmax` when obtaining weights for reweighting
+# policies in KL term
+weighting_temp: 5
 
 # PPO Loss
 # clipping hyperparameter
