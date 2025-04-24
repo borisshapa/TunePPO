@@ -25,7 +25,7 @@
 # updated.
 
 
-prefix: ~/.tune/torchtune
+prefix: ~/.tune
 
 project: TLDR
 group: Llama-Base-PPO
@@ -61,7 +61,8 @@ evaluator:
     base_url: https://api.deepinfra.com/v1/openai
     model: meta-llama/Llama-3.3-70B-Instruct-Turbo
   num_samples: 128 # better be divisible by forward_batch_size
-  every_n_steps: 20
+  every_n_steps: 12
+  seed: 0xD1CE
 
 # Batch parameters
 batch_size: 64
@@ -115,7 +116,7 @@ advantage:
     min_response_len: 18      # would penalize generations shorter than
     penalise_no_eos: True     # would penalize generations with no eos
     reward_penalty: -3        # penalty value
-    kl_coeff: 0.01            # per token kl-penalty coefficient
+    kl_coeff: 0.05            # per token kl-penalty coefficient
     scorer:
       _component_: ppotune.model.LoRAModel
 
@@ -163,12 +164,18 @@ kl_penalty:
   _component_: ppotune.loss.KLPenalty
   coeff: 0.00
 
-reference_model:
-  _component_: ppotune.dist.DistributedPolicyMixture
-  # Regulates probability mass given to self-reference acc. to formula
-  # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
-  # Needed in cooperative setup. In single-agent setup set to null
-  self_preference: null 
+kl_scheduler:
+  _component_: ppotune.schedulers.linear_scheduler
+  initial_value: ${advantage.reward.kl_coeff}
+  final_value: 0.1
+
+# Regulates probability mass given to self-reference acc. to formula
+# ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
+# Needed in cooperative setup. In single-agent setup set to null
+self_preference: 0.8
+# Regulates temperature in `softmax` when obtaining weights for reweighting
+# policies in KL term
+weighting_temp: null
 
 # PPO Loss
 # clipping hyperparameter

@@ -117,7 +117,7 @@ advantage:
     min_response_len: 18      # would penalize generations shorter than
     penalise_no_eos: True     # would penalize generations with no eos
     reward_penalty: -3        # penalty value
-    kl_coeff: 0.03            # per token kl-penalty coefficient
+    kl_coeff: 0.1            # per token kl-penalty coefficient
     scorer:
       _component_: ppotune.model.LoRAModel
 
@@ -161,8 +161,9 @@ kl_penalty:
   coeff: 0.00
 
 kl_scheduler:
-  _component_: ppotune.schedulers.constant_scheduler
-  value: ${advantage.reward.kl_coeff}
+  _component_: ppotune.schedulers.linear_scheduler
+  initial_value: ${advantage.reward.kl_coeff}
+  final_value: 0.1
 
 # Regulates probability mass given to self-reference acc. to formula
 # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
