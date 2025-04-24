@@ -45,11 +45,23 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
             ):
                 query = decode(tokens[query_mask])
                 response = decode(tokens[response_mask])
+
                 prompt = self._extract_prompt(query)
-                reasoning, answer = self._extract_reasonong_answer(response)
-                reference_reasoning, reference_answer = self._extract_reference_reasonong_answer(
+                if prompt is None:
+                    continue
+
+                reasoning_answer = self._extract_reasoning_answer(response)
+                if reasoning_answer is None:
+                    continue
+                reasoning, answer = reasoning_answer
+
+                reference_reasoning_answer = self._extract_reference_reasoning_answer(
                     reference_response
                 )
+                if reference_reasoning_answer is None:
+                    continue
+                reference_reasoning, reference_answer = reference_reasoning_answer
+
                 completion = self._make_completion(reasoning, answer)
                 reference_completion = self._make_completion(reference_reasoning, reference_answer)
                 
@@ -79,7 +91,7 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
         
         return None
 
-    def _extract_reasonong_answer(response: str) -> str:
+    def _extract_reasoning_answer(response: str) -> str:
         match = re.search(
             r'<think>(.*?)</think>\s*<answer>(.*?)</answer>',
             response,
@@ -92,7 +104,7 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
 
         return None
     
-    def _extract_reference_reasonong_answer(reference_response: str) -> str:
+    def _extract_reference_reasoning_answer(reference_response: str) -> str:
         lines = reference_response.strip().splitlines()
         final_line = lines[-1].strip()
         
