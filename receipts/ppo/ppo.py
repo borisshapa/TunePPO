@@ -515,12 +515,6 @@ class PPORecipe(FTRecipeInterface):
 
                         self.global_step += 1
 
-                # update reference policy mixture weights
-                self._ref_policy._reducer = self_preferred_distributed_softmax(
-                    self_preference=self._self_preference,
-                    self_weight=trajectory.scores.mean(),
-                    temperature=self._weighting_temp,
-                )
                 self._kl_scheduler.step()
                 self._steps_run += 1
 
@@ -528,12 +522,20 @@ class PPORecipe(FTRecipeInterface):
                     self.eval(self.policy, self._steps_run)
 
                 wandb_logger.flush(step=self.global_step)
-                self.cleanup_after_step(trajectory)
 
                 if self._steps_run % self._update_ref_policy_every_n_steps == 0:
                     # effectively update reference policy.
                     merge_lora_adapter(self.policy)
                     clear_lora_adapter(self.policy)
+
+                    # update reference policy mixture weights
+                    self._ref_policy._reducer = self_preferred_distributed_softmax(
+                        self_preference=self._self_preference,
+                        self_weight=trajectory.scores.mean(),
+                        temperature=self._weighting_temp,
+                    )
+
+                self.cleanup_after_step(trajectory)
 
                 pbar.update(1)
                 if self._steps_run == self._total_steps:
