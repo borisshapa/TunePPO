@@ -39,6 +39,11 @@ class WandbLogger(MetricLoggerInterface):
         self._completions = wandb.Table(
             columns=["completion", "score"]
         )
+        
+        self._validation_table = wandb.Table(
+            columns=["reference_completion", "completion", "chosen"]
+        )
+        
         wandb.init(
             dir=dir,
             entity=config.entity,
@@ -83,6 +88,17 @@ class WandbLogger(MetricLoggerInterface):
         Collect completion and score.
         """
         self._completions.add_data(completion, score)
+        
+    def collect_validation_completions(
+        self,
+        reference_completion: str,
+        completion: str,
+        chosen: int
+    ) -> None:
+        """
+        Collect pair of completions and chosen completion id for validation.
+        """
+        self._validation_table.add_data(reference_completion, completion, chosen)
 
     def flush(self, step: int) -> None:
         """
@@ -94,6 +110,10 @@ class WandbLogger(MetricLoggerInterface):
         self._log_buffer = {}
         self.log("completion table", self._completions, step)
         self._completions = wandb.Table(columns=["completion", "score"])
+        self.log("validation table", self._validation_table, step)
+        self._validation_table = wandb.Table(
+            columns=["reference_completion", "completion", "chosen"]
+        )
 
     def close(self) -> None:
         wandb.finish()

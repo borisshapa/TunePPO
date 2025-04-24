@@ -44,20 +44,19 @@ dataset:
   _component_: ppotune.datasets.plain_gsm8k_dataset
   split: train
 
-# evaluation_dataset:
-#   _component_: ppotune.datasets.plain_gsm8k_dataset
-#   split: test
+evaluation_dataset:
+  _component_: ppotune.datasets.eval_gsm8k_dataset
 
-# # Evaluator
-# evaluator:
-#   _component_: ppotune.evaluation.gsm8k_evaluator
-#   arbiter:
-#     _component_: ppotune.arbiters.gsm8k_arbiter
-#     base_url: https://api.deepinfra.com/v1/openai
-#     model: meta-llama/Llama-3.3-70B-Instruct-Turbo
-#   num_samples: 128 # better be divisible by forward_batch_size
-#   every_n_steps: 1
-#   seed: 0xD1CE
+# Evaluator
+evaluator:
+  _component_: ppotune.evaluation.gsm8k_evaluator
+  arbiter:
+    _component_: ppotune.arbiters.gsm8k_arbiter
+    base_url: https://api.deepinfra.com/v1/openai
+    model: meta-llama/Llama-3.3-70B-Instruct-Turbo
+  num_samples: 128 # better be divisible by forward_batch_size
+  every_n_steps: 13
+  seed: 0xD1CE
 
 # Batch parameters
 batch_size: 64

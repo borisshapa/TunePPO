@@ -10,6 +10,10 @@ import numpy as np
 
 from openai import OpenAI
 
+from ppotune.log import WandbLogger
+
+logger = WandbLogger()
+
 
 class PairwiseArbiter(ABC):
     """
@@ -109,9 +113,11 @@ class RemotePairwiseArbiter(PairwiseArbiter):
         )
         response = completion.choices[0].message.content
         if response in ["0", "1"]:
-            return int(response)
+            response = int(response)
         else:
             logging.warning(
                 f"Invalid response from the judge model: '{response}'. Returning -1."
             )
             return -1
+        
+        return response

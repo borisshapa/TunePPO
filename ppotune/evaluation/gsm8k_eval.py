@@ -41,7 +41,7 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
                 generated.tokens,
                 generated.query_mask,
                 generated.response_mask,
-                batch["answer"]
+                batch["answers"]
             ):
                 query = decode(tokens[query_mask])
                 response = decode(tokens[response_mask])
@@ -77,6 +77,13 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
             sum([ref_answer == answer for ref_answer, answer in answers]) / len(answers)
         )
         
+        for idx in range(8):
+            logger.collect_validation_completions(
+                completions[idx][0],
+                completions[idx][1],
+                wins[idx]
+            )
+        
         logger.collect_dict({
             "winrate": winrate,
             "validation_answer_accuracy": answer_accuracy
@@ -84,14 +91,14 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
         
         return prompts, completions
     
-    def _extract_prompt(query: str) -> str:
+    def _extract_prompt(self, query: str) -> str:
         match = re.search(r'User:\s*(.+?)\s*Assistant:', query, re.DOTALL)
         if match:
             return match.group(1).strip()
         
         return None
 
-    def _extract_reasoning_answer(response: str) -> str:
+    def _extract_reasoning_answer(self, response: str) -> str:
         match = re.search(
             r'<think>(.*?)</think>\s*<answer>(.*?)</answer>',
             response,
@@ -104,7 +111,10 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
 
         return None
     
-    def _extract_reference_reasoning_answer(reference_response: str) -> str:
+    def _extract_reference_reasoning_answer(
+        self,
+        reference_response: str
+    ) -> str:
         lines = reference_response.strip().splitlines()
         final_line = lines[-1].strip()
         
@@ -118,8 +128,8 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
 
         return None
     
-    def _make_completion(reasoning: str, answer: str) -> str:
-        return f"Reasoning: {reasoning}\nAnswer: {answer}"
+    def _make_completion(self, reasoning: str, answer: str) -> str:
+        return f"Reasoning: {reasoning}\n\nAnswer: {answer}"
 
 
 def gsm8k_evaluator(
