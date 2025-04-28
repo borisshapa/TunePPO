@@ -59,7 +59,7 @@ class GAE(IAdvantageModel):
     """
     def __init__(
         self,
-        reward: LLMRewardModel,
+        reward: LLMRewardModel, # per token rm
         gamma: float,
         lmbda: float,
         value_coeff: float,
@@ -110,7 +110,7 @@ class GAE(IAdvantageModel):
             advantages=advantages,
             values=values,
             returns=returns,
-            rewards=rewards
+            scores=rewards.sum(dim=1)
         )
 
     def estimate_values(
@@ -172,7 +172,7 @@ class GRAE(IAdvantageModel):
     """
     def __init__(
         self,
-        reward: IRewardModel,
+        reward: IRewardModel, # per sequence rm
         group_size: int
     ) -> None:
 
@@ -206,7 +206,7 @@ class GRAE(IAdvantageModel):
             advantages=advantages,
             values=torch.zeros_like(advantages), # irrelevant
             returns=torch.zeros_like(advantages), # irrelevant
-            rewards=rewards
+            scores=rewards
         )
 
     def loss(self, **kwargs) -> torch.Tensor:

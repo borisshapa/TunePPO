@@ -39,6 +39,25 @@ class GSM8K(QATransform):
             answer = answer,
         )
 
+
+class GSM8KEval(QATransform):
+    """
+    Keeps full answer as in the dataset.
+    """
+    def __call__(
+        self,
+        sample: tp.Mapping[str, tp.Any]
+    ) -> QAProblem:
+
+        question = sample["question"]
+        answer = sample["answer"]
+
+        return QAProblem(
+            question = question,
+            answer = answer,
+        )
+
+
 def gsm8k_dataset(
     tokenizer: ModelTokenizer,
     *,
@@ -74,6 +93,7 @@ def chat_gsm8k_dataset(
         prompt_template=None
     )
 
+
 def plain_gsm8k_dataset(
     tokenizer: ModelTokenizer,
     *,
@@ -86,4 +106,25 @@ def plain_gsm8k_dataset(
         tokenizer,
         split=split,
         prompt_template=GSM8K_PROMPT_TEMPLATE
+    )
+
+
+def eval_gsm8k_dataset(
+    tokenizer: ModelTokenizer,
+    *,
+    split: str = "test",
+    **load_dataset_kwargs: tp.Dict[str, tp.Any],
+) -> QADataset:
+    """
+    GSM8k dataset for evaluation.
+    """
+    return QADataset(
+        tokenizer=tokenizer,
+        source="openai/gsm8k",
+        sample_transform=GSM8KEval(),
+        system_prompt=GSM8K_SYSTEM_PROMPT,
+        prompt_template=GSM8K_PROMPT_TEMPLATE,
+        split=split,
+        name="main",
+        **load_dataset_kwargs,
     )

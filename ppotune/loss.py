@@ -15,7 +15,7 @@ class KLPenalty(nn.Module):
     """
     def __init__(self, coeff: float) -> None:
         super().__init__()
-        self._coeff = coeff
+        self._coeff = torch.tensor(coeff)
 
     def forward(
         self,
@@ -28,5 +28,8 @@ class KLPenalty(nn.Module):
         """
         per_token_kl = torch.exp(rhs_logprobs - lhs_logprobs) - (rhs_logprobs - lhs_logprobs) - 1
         kl_penalty = self._coeff * masked_mean(per_token_kl, padding_masks)
+
         logger.collect("kl_penalty", kl_penalty)
+        logger.collect("kl_coeff", self._coeff)
+
         return kl_penalty

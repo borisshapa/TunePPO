@@ -6,10 +6,10 @@ class AdvantageTrajectoryStats(tp.NamedTuple):
     """
     Contains a collection of tensors stats collected at Advantage Model estimation stage
     """
-    advantages: torch.Tensor
-    values: torch.Tensor
-    returns: torch.Tensor
-    rewards: torch.Tensor
+    advantages: torch.Tensor    # B | B x R
+    values:     torch.Tensor    # B | B x R
+    returns:    torch.Tensor    # B | B x R
+    scores:     torch.Tensor    # B
 
 
 class PPOTrajectoryStats(tp.NamedTuple):
@@ -49,6 +49,7 @@ class PPOTrajectoryStats(tp.NamedTuple):
     ref_logprobs: torch.Tensor
 
     # advantage model stats
+    advantages: torch.Tensor
     values: torch.Tensor
     returns: torch.Tensor
-    advantages: torch.Tensor
+    scores: torch.Tensor

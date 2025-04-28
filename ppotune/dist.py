@@ -5,6 +5,10 @@ import torch.distributed as dist
 
 from torchtune.modules import TransformerDecoder
 
+from ppotune.log import WandbLogger
+
+
+log = WandbLogger()
 
 # ------------------ Distributed Communication Primitives ------------------- #
 def all_gather_even(tensor: torch.Tensor) -> list[torch.Tensor]:
@@ -52,29 +56,133 @@ def all_to_all(tensors: list[torch.Tensor]) -> list[torch.Tensor]:
 
 
 # --------------------- Distributed Special Utilities ----------------------- #
-def rank_preferred_mean(
-    tensors: tp.Iterable[torch.Tensor],
+class WeightedMean:
+    def __init__(self, weights: tp.List[float]) -> None:
+        self._weights = weights
+
+    @property
+    def weights(self) -> torch.Tensor:
+        weights = torch.tensor(self._weights)
+        return weights / weights.sum()
+
+    def __call__(
+        self,
+        tensors: tp.Iterable[torch.Tensor],
+    ) -> torch.Tensor:
+        tensors = torch.stack(tensors)
+        weights = self.weights.to(tensors[0].device)
+        log.collect("self_preference", weights[dist.get_rank()])
+        for _ in range(tensors.dim() - 1):
+            weights = weights.unsqueeze(-1)
+        return (weights * tensors).sum(dim=0)
+
+
+def mean() -> WeightedMean:
+    weights = [1. / dist.get_world_size()] * dist.get_world_size()
+    return WeightedMean(weights)
+
+
+def weighted_mean(
+    weights: tp.Optional[tp.List[float]] = None
+) -> WeightedMean:
+    if weights is None:
+        return mean()
+
+    return WeightedMean(weights)
+
+
+def softmax(
+    weights: tp.Optional[tp.List[float]] = None,
+    temperature: tp.Optional[float] = None
+) -> WeightedMean:
+    if weights is None:
+        return mean()
+
+    weights = torch.tensor(weights)
+
+    if temperature is not None:
+        weights /= temperature
+
+    weights = torch.softmax(weights, dim=0)
+
+    return WeightedMean(weights.tolist())
+
+
+def distributed_weighted_mean(
+    self_weight: tp.Optional[torch.Tensor]
+) -> WeightedMean:
+    if self_weight is None:
+        return mean()
+
+    peer_weights: list[torch.Tensor] = all_gather_even(self_weight)
+    return weighted_mean(torch.tensor(peer_weights).tolist())
+
+
+def distributed_softmax(
+    self_weight: tp.Optional[torch.Tensor],
+    temperature: tp.Optional[float] = None,
+) -> WeightedMean:
+    if self_weight is None:
+        return mean()
+
+    peer_weights: list[torch.Tensor] = all_gather_even(self_weight)
+    return softmax(torch.tensor(peer_weights).tolist(), temperature)
+
+
+def self_preferred_mean(
     self_preference: tp.Optional[float] = None
-) -> torch.Tensor:
-    """
-    Computes a weighted mean of a list of tensors, giving preference to the
-    tensor corresponding to the current process rank.
-    """
-    assert len(tensors) == dist.get_world_size()
+) -> WeightedMean:
+
+    if self_preference is None:
+        return mean()
 
     if dist.get_world_size() == 1:
-        return tensors[0]
+        return mean()
 
-    if not self_preference:
-        return torch.stack(tensors).mean(dim=0)
+    other_preference = (1 - self_preference) / (dist.get_world_size() - 1)
+    weights = [other_preference] * dist.get_world_size()
+    weights[dist.get_rank()] = self_preference
+    return weighted_mean(weights)
 
-    assert (0.0 <= self_preference) and (self_preference <= 1.0)
 
-    rank = dist.get_rank()
-    this = tensors[rank]
-    others = tensors[0 : rank] + tensors[rank + 1 :]
-    return self_preference * this + (1.0 - self_preference) * torch.stack(others).mean(dim=0)
+def self_preferred_weighted_mean(
+    self_preference: tp.Optional[float] = None,
+    weights: tp.Optional[tp.List[float]] = None,
+) -> WeightedMean:
+    self_preferred_weights: torch.Tensor = self_preferred_mean(
+        self_preference
+    ).weights
+    return weighted_mean((self_preferred_weights * torch.tensor(weights)).tolist())
 
+
+def self_preferred_distributed_weighted_mean(
+    self_preference: tp.Optional[float] = None,
+    self_weight: tp.Optional[torch.Tensor] = None,
+) -> WeightedMean:
+    self_preferred_weights: torch.Tensor = self_preferred_mean(
+        self_preference
+    ).weights
+    distributed_weights: torch.Tensor = distributed_weighted_mean(
+        self_weight
+    ).weights
+    return weighted_mean((self_preferred_weights * distributed_weights).tolist())
+
+
+def self_preferred_distributed_softmax(
+    self_preference: tp.Optional[float] = None,
+    self_weight: tp.Optional[torch.Tensor] = None,
+    temperature: tp.Optional[float] = None,
+) -> WeightedMean:
+    self_preferred_weights: torch.Tensor = self_preferred_mean(
+        self_preference
+    ).weights
+    distributed_softmax_weights: torch.Tensor = distributed_softmax(
+        self_weight,
+        temperature
+    ).weights
+    return weighted_mean(
+        (self_preferred_weights * distributed_softmax_weights).tolist()
+    )
 
 # ----------------------- Distributed Policy Mixture ------------------------ #
 class DistributedPolicyMixture:
@@ -84,10 +192,12 @@ class DistributedPolicyMixture:
     def __init__(
         self,
         local_policy: TransformerDecoder,
-        self_preference : tp.Optional[float] = None
+        reducer: tp.Optional[WeightedMean] = None,
     ) -> None:
         self._policy = local_policy
-        self._preference = self_preference
+        if reducer is None:
+            reducer = weighted_mean()
+        self._reducer=reducer
 
     def forward(
         self,
@@ -126,7 +236,7 @@ class DistributedPolicyMixture:
             for tokens, pos, mask in zip(peer_tokens, peer_pos, peer_masks)
         ]
         peer_logits_responded = all_to_all(peer_logits_requested)
-        return rank_preferred_mean(peer_logits_responded, self._preference)
+        return self._reducer(peer_logits_responded)
 
     def __call__(
         self,

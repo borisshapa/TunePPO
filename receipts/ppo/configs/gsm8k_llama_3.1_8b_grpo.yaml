@@ -6,8 +6,8 @@
 # This config assumes that you've run the following commands before launching
 # this run: (take a look what prefix is down the config)
 # Download the policy model
-#   a. (Base) tune download meta-llama/Llama-3.1-8B --output-dir ${prefix}/models/Llama-3.1-8B-Base/ --ignore-patterns "original/consolidated.00.pth"
-#   b. (Instruct) tune download meta-llama/Llama-3.1-8B-Instruct --output-dir ${prefix}/models/Llama-3.1-8B-Instruct/ --ignore-patterns "original/consolidated.00.pth"
+#   a. (Base) tune download meta-llama/Llama-3.1-8B --output-dir ~/.tune/models/Llama-3.1-8B-Base/ --ignore-patterns "original/consolidated.00.pth"
+#   b. (Instruct) tune download meta-llama/Llama-3.1-8B-Instruct --output-dir ~/.tune/models/Llama-3.1-8B-Instruct/ --ignore-patterns "original/consolidated.00.pth"
 #
 # You'll also need to ensure that {output_dir} exists beforehand, as checkpoints for policy and
 # value models as well as WandBLogger logs are saved in sub-folders.
@@ -15,14 +15,11 @@
 # To launch on N devices (starting from 1), run the following command from repo root:
 #   tune run --nproc_per_node N receipts/ppo/ppo.py --config receipts/ppo/configs/gsm8k_llama_3.1_8b_ppo.yaml
 #
-
-# NOTE: Use full paths only. '~' would not expand.
 # NOTE: Do not override from CLI variables other variables depend on. The dependants would not be
 # updated.
 
 
-# Change those to your preference. Do not do that via CLI!
-prefix: /home/optteam/.tune
+prefix: ~/.tune
 
 project: GSM8K
 # group: Llama-3.1-8B-Instruct-GRPO
@@ -47,6 +44,20 @@ dataset:
   _component_: ppotune.datasets.plain_gsm8k_dataset
   split: train
 
+evaluation_dataset:
+  _component_: ppotune.datasets.eval_gsm8k_dataset
+
+# Evaluator
+evaluator:
+  _component_: ppotune.evaluation.gsm8k_evaluator
+  arbiter:
+    _component_: ppotune.arbiters.gsm8k_arbiter
+    base_url: https://api.deepinfra.com/v1/openai
+    model: meta-llama/Llama-3.3-70B-Instruct-Turbo
+  num_samples: 128 # better be divisible by forward_batch_size
+  every_n_steps: 13
+  seed: 0xD1CE
+
 # Batch parameters
 batch_size: 64
 group_size: 8 # needed in GRPO. just leave it as is.
@@ -60,8 +71,7 @@ forward_batch_size: 8
 policy:
   _component_: ppotune.model.GenerativeLoRAModel
   generation_batch_size: ${forward_batch_size}
-  max_seq_len: ${tokenizer.max_seq_len}
-  max_generated_tokens: 250
+  max_response_len: 250
   temperature: 0.7
   top_k: null
   model:
@@ -100,7 +110,7 @@ shuffle: True
 
 # reduces training performance but helps a lot with CUDA OOMs and invalid
 # memory access errors in tight memoty setup
-# empty_cache_after_generation: True
+empty_cache_after_generation: True
 
 optimizer:
   _component_: bitsandbytes.optim.PagedAdamW
@@ -114,14 +124,20 @@ sampler:
 
 kl_penalty:
   _component_: ppotune.loss.KLPenalty
-  coeff: 0.01
+  coeff: 0.1
 
-reference_model:
-  _component_: ppotune.dist.DistributedPolicyMixture
-  # Regulates probability mass given to self-reference acc. to formula
-  # ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
-  # Needed in cooperative setup. In single-agent setup set to null
-  self_preference: null
+kl_scheduler:
+  _component_: ppotune.schedulers.linear_scheduler
+  initial_value: ${kl_penalty.coeff}
+  final_value: ${kl_penalty.coeff}
+
+# Regulates probability mass given to self-reference acc. to formula
+# ref = self_preference * self_ref + (1 - self_preference) * others_ref.mean()
+# Needed in cooperative setup. In single-agent setup set to null
+self_preference: 0.8
+# Regulates temperature in `softmax` when obtaining weights for reweighting
+# policies in KL term
+weighting_temp: 5
 
 # PPO Loss
 # clipping hyperparameter

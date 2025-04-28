@@ -25,22 +25,30 @@ class WandbLogger(MetricLoggerInterface):
         """
         Initialize wandb itself with separate runs for each device.
         """
+        if group := config.get("group"):
+            group = f"{group}-{dist.get_world_size()}x"
         if name := config.get("name"):
             name = f"{name}-{dist.get_rank()}/{dist.get_world_size() - 1}"
 
-        if not os.path.exists(config.dir):
-            os.makedirs(config.dir)
+        dir = os.path.expanduser(config.dir)
+        if not os.path.exists(dir):
+            os.makedirs(dir)
 
         self._log_buffer: tp.Dict[str, list[torch.Tensor]] = {}
 
         self._completions = wandb.Table(
             columns=["completion", "score"]
         )
+        
+        self._validation_table = wandb.Table(
+            columns=["reference_completion", "completion", "chosen"]
+        )
+        
         wandb.init(
-            dir=config.dir,
+            dir=dir,
             entity=config.entity,
             project=config.project,
-            group=config.group,
+            group=group,
             name=name,
         )
         # define default x-axis (for latest wandb versions)
@@ -80,6 +88,17 @@ class WandbLogger(MetricLoggerInterface):
         Collect completion and score.
         """
         self._completions.add_data(completion, score)
+        
+    def collect_validation_completions(
+        self,
+        reference_completion: str,
+        completion: str,
+        chosen: int
+    ) -> None:
+        """
+        Collect pair of completions and chosen completion id for validation.
+        """
+        self._validation_table.add_data(reference_completion, completion, chosen)
 
     def flush(self, step: int) -> None:
         """
@@ -91,6 +110,10 @@ class WandbLogger(MetricLoggerInterface):
         self._log_buffer = {}
         self.log("completion table", self._completions, step)
         self._completions = wandb.Table(columns=["completion", "score"])
+        self.log("validation table", self._validation_table, step)
+        self._validation_table = wandb.Table(
+            columns=["reference_completion", "completion", "chosen"]
+        )
 
     def close(self) -> None:
         wandb.finish()
