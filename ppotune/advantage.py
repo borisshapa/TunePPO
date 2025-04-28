@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 from typing import Iterator, Tuple
 from torchtune import rlhf
 
-from ppotune.datatypes import AdvantageTrajectoryStats
+from ppotune.data.types import AdvantageTrajectoryStats
 from ppotune.reward import IRewardModel, LLMRewardModel
 from ppotune.utils import append_mask
 from ppotune.log import WandbLogger

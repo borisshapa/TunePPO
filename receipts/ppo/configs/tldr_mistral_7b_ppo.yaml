@@ -38,42 +38,47 @@ run: PPO
 
 output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
-# Tokenizer
+seed: 0xD1CE
+
 tokenizer:
   _component_: ppotune.tokenizers.mistral2_tokenizer
   path: ${prefix}/models/${model}/tokenizer.model
   max_seq_len: 2500
 
-# Dataset
 dataset:
-  _component_: ppotune.datasets.tldr_dataset
+  _component_: ppotune.data.sets.tldr_dataset
   source: RLHF-And-Friends/tldr-ppo
   split: train
+
+dataloader:
+  _component_: ppotune.data.loaders.distributed_dataloader
+  num_steps: 156,
+  batch_size: 64,
 
 evaluation_dataset:
   _component_: ppotune.datasets.tldr_dataset
   source: RLHF-And-Friends/tldr-ppo
   split: validation
 
-# Evaluator
+evaluation_dataloader:
+  _component_: ppotune.data.loaders.dataloader
+  batch_size: 8, # has to be the same as forward_batch_size
+  num_steps: 16,
+
 evaluator:
   _component_: ppotune.evaluation.reference_completion_evaluator
   arbiter:
     _component_: ppotune.arbiters.tldr_arbiter
     base_url: https://api.deepinfra.com/v1/openai
     model: meta-llama/Llama-3.3-70B-Instruct-Turbo
-  num_samples: 128 # better be divisible by forward_batch_size
   every_n_steps: 13
-  seed: 0xD1CE
 
-# Batch parameters
-batch_size: 64
-group_size: 1 # needed in GRPO. just leave it as is.
-num_steps: 10000
+# PPO Optimization Batch Parameters
 ppo_epochs: 2
 ppo_batch_size: 32
-gradient_accumulation_steps: 4 # Use to increase effective batch size
+gradient_accumulation_steps: 4
 forward_batch_size: 8
+
 
 # Policy / Reference Policy when adapter disabled
 policy:
@@ -144,7 +149,6 @@ advantage:
         lora_dropout: 0.0
         quantize_base: False
 
-seed: 0xD1CE
 shuffle: True
 
 optimizer:
@@ -152,9 +156,6 @@ optimizer:
   lr: 1e-4
 
 dtype: bf16 # | fp32 | fp16 is not supported
-
-sampler:
-  _component_: torch.utils.data.DistributedSampler
 
 kl_penalty:
   _component_: ppotune.loss.KLPenalty

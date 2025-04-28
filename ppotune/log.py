@@ -52,15 +52,15 @@ class WandbLogger(MetricLoggerInterface):
             name=name,
         )
         # define default x-axis (for latest wandb versions)
-        wandb.define_metric("global_step")
-        wandb.define_metric("*", step_metric="global_step", step_sync=True)
+        wandb.define_metric("step")
+        wandb.define_metric("*", step_metric="step", step_sync=True)
 
 
     def log(self, name: str, data: Scalar, step: int) -> None:
-        wandb.log({name: data, "global_step": step})
+        wandb.log({name: data, "step": step})
 
     def log_dict(self, payload: tp.Mapping[str, Scalar], step: int) -> None:
-        wandb.log({**payload, "global_step": step})
+        wandb.log({**payload, "step": step})
 
     def log_config(self, config: DictConfig) -> None:
         resolved = OmegaConf.to_container(config, resolve=True)
@@ -88,7 +88,7 @@ class WandbLogger(MetricLoggerInterface):
         Collect completion and score.
         """
         self._completions.add_data(completion, score)
-        
+
     def collect_validation_completions(
         self,
         reference_completion: str,

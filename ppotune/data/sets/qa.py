@@ -7,7 +7,7 @@ from torchtune.modules.transforms import Transform
 from torchtune.data import Message
 from datasets import load_dataset
 
-from ppotune.datasets.utils import PromptTemplate, apply_prompt_template
+from ppotune.data.utils import PromptTemplate, apply_prompt_template
 
 
 class QAProblem(tp.TypedDict):

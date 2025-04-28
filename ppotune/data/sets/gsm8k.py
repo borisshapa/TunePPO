@@ -2,8 +2,8 @@ import typing as tp
 
 from torchtune.modules.tokenizers import ModelTokenizer
 
-from ppotune.datasets.utils import PromptTemplate, PrefixSuffix
-from ppotune.datasets.qa import QAProblem, QATransform, QADataset
+from ppotune.data.sets.utils import PromptTemplate, PrefixSuffix
+from ppotune.data.sets.qa import QAProblem, QATransform, QADataset
 
 
 GSM8K_SYSTEM_PROMPT: str = (

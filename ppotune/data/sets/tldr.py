@@ -1,6 +1,6 @@
 import typing as tp
 
-from ppotune.datasets.text_completion import (
+from ppotune.data.sets.text_completion import (
     TCTransform,
     TextCompletion,
     TextCompletionDataset
