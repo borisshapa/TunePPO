@@ -32,15 +32,16 @@ class GSM8K(QATransform):
 
         question = sample["question"]
         solution = sample["answer"]
-        path, answer = solution.split("#### ")
+        cot, answer = solution.split("#### ")
 
         return QAProblem(
             question = question,
+            cot = cot,
             answer = answer,
         )
 
 
-class GSM8KEval(QATransform):
+class GSM8KEval(QATransform): # TODO: DEPRECATE
     """
     Keeps full answer as in the dataset.
     """
@@ -109,7 +110,7 @@ def plain_gsm8k_dataset(
     )
 
 
-def eval_gsm8k_dataset(
+def eval_gsm8k_dataset( # TODO: DEPRECATE
     tokenizer: ModelTokenizer,
     *,
     split: str = "test",

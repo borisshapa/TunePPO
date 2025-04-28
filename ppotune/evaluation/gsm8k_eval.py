@@ -16,6 +16,19 @@ from ppotune.evaluation.eval import ReferenceCompletionEvaluator
 logger = WandbLogger()
 
 
+# NOTE:
+# LOOKS LIKE TOO MUCH OF DUPLICATED LOGIC COMPARED TO ReferenceCompletionEvaluator.
+# It feels better to extend the original and do some more-fine grained logic
+# rather then creatring the whole new class.
+# Possible solutions are
+# - kind of inversed prompt templates (ones that may be passed somewhere like
+# this evaluator to parse this User-Assistant stuff
+# - all this parsing utils may be strored somewhere in a centralized manner
+# like in some kind of utils block in ppotune.datasets.gsm8k
+# - new judges like
+#   + simple judge for accuracy computation (just uses '==' operator)
+#   + composite judge to compose llm judjge and this simple one and be used here
+#
 class Gsm8kEvaluator(ReferenceCompletionEvaluator):
     def __call__(
         self,
@@ -46,6 +59,9 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
                 query = decode(tokens[query_mask])
                 response = decode(tokens[response_mask])
 
+                # NOTE:
+                # LOOKS OVERWHELMING A BIT
+                # MAYBE USE TRY-CATCH HERE INSTEAD OF ALL THESE CHECKS?
                 prompt = self._extract_prompt(query)
                 if prompt is None:
                     continue
@@ -64,7 +80,7 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
 
                 completion = self._make_completion(reasoning, answer)
                 reference_completion = self._make_completion(reference_reasoning, reference_answer)
-                
+
                 prompts.append(prompt)
                 completions.append((reference_completion, completion))
                 answers.append((reference_answer, answer))
@@ -72,30 +88,30 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
         wins = torch.tensor(self._arbiter.judge(prompts, completions))
         valid = wins != -1
         winrate = wins[valid].float().mean()
-        
+
         answer_accuracy = torch.tensor(
             sum([ref_answer == answer for ref_answer, answer in answers]) / len(answers)
         )
-        
+
         for idx in range(8):
             logger.collect_validation_completions(
                 completions[idx][0],
                 completions[idx][1],
                 wins[idx]
             )
-        
+
         logger.collect_dict({
             "winrate": winrate,
             "validation_answer_accuracy": answer_accuracy
         })
-        
+
         return prompts, completions
-    
+
     def _extract_prompt(self, query: str) -> str:
         match = re.search(r'User:\s*(.+?)\s*Assistant:', query, re.DOTALL)
         if match:
             return match.group(1).strip()
-        
+
         return None
 
     def _extract_reasoning_answer(self, response: str) -> str:
@@ -110,24 +126,24 @@ class Gsm8kEvaluator(ReferenceCompletionEvaluator):
             return reasoning, answer
 
         return None
-    
+
     def _extract_reference_reasoning_answer(
         self,
         reference_response: str
     ) -> str:
         lines = reference_response.strip().splitlines()
         final_line = lines[-1].strip()
-        
+
         # Match the final answer line
         answer_match = re.match(r'^####\s*(\d+)', final_line)
-        
+
         if answer_match:
             answer = answer_match.group(1)
             reasoning = '\n'.join(lines[:-1]).strip()
             return reasoning, answer
 
         return None
-    
+
     def _make_completion(self, reasoning: str, answer: str) -> str:
         return f"Reasoning: {reasoning}\n\nAnswer: {answer}"
 
