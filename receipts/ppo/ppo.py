@@ -14,7 +14,7 @@ import torch.distributed as dist
 from omegaconf import DictConfig
 from torch import nn
 from torch.optim import Optimizer
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, dataloader
 
 from torchtune import config, generation, rlhf, training, utils
 from torchtune.modules.peft import (
@@ -217,7 +217,7 @@ class PPORecipe(FTRecipeInterface):
         batch sizes for model forward passes during trajectory generation, PPO minibatches,
         PPO microbatches for gradient accumulation.
         """
-        batch_size = cfg.dataloader.batch_size
+        self.batch_size = cfg.dataloader.batch_size
         self._forward_batch_size = cfg.forward_batch_size
         self._ppo_epochs = cfg.ppo_epochs
         self._ppo_batch_size = cfg.ppo_batch_size
@@ -225,9 +225,9 @@ class PPORecipe(FTRecipeInterface):
         self._ppo_backward_batch_size = (
             cfg.ppo_batch_size // self._gradient_accumulation_steps
         )
-        assert batch_size % self._forward_batch_size == 0
-        assert batch_size % self._ppo_batch_size == 0
-        assert self._po_batch_size % self._gradient_accumulation_steps == 0
+        assert self.batch_size % self._forward_batch_size == 0
+        assert self.batch_size % self._ppo_batch_size == 0
+        assert self._ppo_batch_size % self._gradient_accumulation_steps == 0
 
     @torch.no_grad()
     def generate_trajectory(self, batch: dict) -> PPOTrajectoryStats:
@@ -360,14 +360,15 @@ class PPORecipe(FTRecipeInterface):
         """
         self._optimizer.zero_grad()
 
-        if self.eval:
-            self.eval(self.policy)
-
         for step, batch in tqdm(
             enumerate(self.dataloader),
             desc="Train",
-            dstcdisable=dist.get_rank() != 0
+            disable=dist.get_rank() != 0,
+            total=len(self.dataloader)
         ):
+            if self.eval:
+                self.eval(self.policy, step)
+
             trajectory = self.generate_trajectory_batched(batch, self._empty_cache)
             # optimize with PPO objective over multiple epochs
             for _ in range(self._ppo_epochs):
@@ -398,10 +399,7 @@ class PPORecipe(FTRecipeInterface):
                     self._optimizer.step()
                     self._optimizer.zero_grad(set_to_none=True)
 
-            self._kl_scheduler.step()
-
-            if self.eval:
-                self.eval(self.policy, step)
+            # self._kl_scheduler.step()
 
             wandb_logger.flush(step=step)
 
@@ -418,6 +416,10 @@ class PPORecipe(FTRecipeInterface):
                 )
 
             self.cleanup_after_step(trajectory)
+
+        if self.eval: # final evaluation
+            self.eval(self.policy)
+            wandb_logger.flush(step=len(self.dataloader))
 
         self.policy.save_checkpoint()
 

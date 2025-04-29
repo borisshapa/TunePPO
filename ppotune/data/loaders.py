@@ -23,7 +23,7 @@ def subset(
     assert num_samples <= len(dataset)
 
     indices = torch.randperm(len(dataset), generator=generator)[:num_samples]
-    subset = Subset(dataset, indices)
+    subset = Subset(dataset, indices.tolist())
     return subset
 
 
@@ -40,14 +40,13 @@ def distributed_subset(
     indices = torch.randperm(len(dataset), generator=generator)
     local_offset = dist.get_rank() * num_samples
     local_indices = indices[local_offset : local_offset + num_samples]
-    local_subset = Subset(dataset, local_indices)
+    local_subset = Subset(dataset, local_indices.tolist())
     return local_subset
 
 
 def dataloader(
     tokenizer: ModelTokenizer,
     dataset: Dataset,
-    *
     num_steps: int,
     batch_size: int,
     group_size: int = 1,
@@ -87,7 +86,6 @@ def dataloader(
 def distributed_dataloader(
     tokenizer: ModelTokenizer,
     dataset: Dataset,
-    *
     num_steps: int,
     batch_size: int,
     group_size: int = 1,

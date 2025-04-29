@@ -2,7 +2,7 @@ import typing as tp
 
 from torchtune.modules.tokenizers import ModelTokenizer
 
-from ppotune.data.sets.utils import PromptTemplate, PrefixSuffix
+from ppotune.data.utils import PromptTemplate, PrefixSuffix
 from ppotune.data.sets.qa import QAProblem, QATransform, QADataset
 
 

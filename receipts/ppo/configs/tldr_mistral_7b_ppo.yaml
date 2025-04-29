@@ -30,8 +30,8 @@
 
 prefix: ~/.tune
 
-project: TLDR
-group: Mistral-Base-PPO-SWR64
+project: PTLDR
+group: Mistral-Base-PPO
 model: Mistral-7B-Base # | Mistral-7B-SmallSFT |  Mistral-7B-SFT | Mistral-7B-Base | Mistral-7B-Instruct
 reward: TLDR-Mistral-7B-SmallSFT-RM # | TLDR-Mistral-7B-RM
 run: PPO
@@ -52,18 +52,18 @@ dataset:
 
 dataloader:
   _component_: ppotune.data.loaders.distributed_dataloader
-  num_steps: 156,
-  batch_size: 64,
+  batch_size: 64
+  num_steps: 156
 
 evaluation_dataset:
-  _component_: ppotune.datasets.tldr_dataset
+  _component_: ppotune.data.sets.tldr_dataset
   source: RLHF-And-Friends/tldr-ppo
   split: validation
 
 evaluation_dataloader:
   _component_: ppotune.data.loaders.dataloader
-  batch_size: 8, # has to be the same as forward_batch_size
-  num_steps: 16,
+  batch_size: 8 # has to be the same as forward_batch_size
+  num_steps: 16
 
 evaluator:
   _component_: ppotune.evaluation.reference_completion_evaluator
