@@ -1,47 +1,16 @@
 import torch
 import torch.distributed as dist
 
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset
 from torchtune.modules.transforms.tokenizers import ModelTokenizer
 
+from ppotune.data.subsets import subset, distributed_subset
 from ppotune.data.collators import LeftPadCollator
 from ppotune.data.samplers import (
     RepeatedSampler,
     GroupedSampler,
     PermutationSampler
 )
-
-
-def subset(
-    dataset: Dataset,
-    num_samples: int,
-    generator: torch.Generator = None,
-) -> Subset:
-    """
-    Selects random subset of the dataset.
-    """
-    assert num_samples <= len(dataset)
-
-    indices = torch.randperm(len(dataset), generator=generator)[:num_samples]
-    subset = Subset(dataset, indices.tolist())
-    return subset
-
-
-def distributed_subset(
-    dataset: Dataset,
-    num_samples: int,
-    generator: torch.Generator,
-) -> Subset:
-    """
-    Split dataset for each rank evenly.
-    """
-    assert dist.get_world_size() * num_samples <= len(dataset)
-
-    indices = torch.randperm(len(dataset), generator=generator)
-    local_offset = dist.get_rank() * num_samples
-    local_indices = indices[local_offset : local_offset + num_samples]
-    local_subset = Subset(dataset, local_indices.tolist())
-    return local_subset
 
 
 def dataloader(
