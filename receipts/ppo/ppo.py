@@ -14,7 +14,7 @@ import torch.distributed as dist
 from omegaconf import DictConfig
 from torch import nn
 from torch.optim import Optimizer
-from torch.utils.data import Dataset, DataLoader, dataloader
+from torch.utils.data import Dataset, DataLoader
 
 from torchtune import config, generation, rlhf, training, utils
 from torchtune.modules.peft import (
@@ -360,14 +360,15 @@ class PPORecipe(FTRecipeInterface):
         """
         self._optimizer.zero_grad()
 
+        if self.eval:
+            self.eval(self.policy)
+
         for step, batch in tqdm(
-            enumerate(self.dataloader),
+            enumerate(self.dataloader, start=1),
             desc="Train",
             disable=dist.get_rank() != 0,
             total=len(self.dataloader)
         ):
-            if self.eval:
-                self.eval(self.policy, step)
 
             trajectory = self.generate_trajectory_batched(batch, self._empty_cache)
             # optimize with PPO objective over multiple epochs
@@ -401,6 +402,9 @@ class PPORecipe(FTRecipeInterface):
 
             # self._kl_scheduler.step()
 
+            if self.eval:
+                self.eval(self.policy, step)
+
             wandb_logger.flush(step=step)
 
             if step % self._update_ref_policy_every_n_steps == 0:
@@ -416,10 +420,6 @@ class PPORecipe(FTRecipeInterface):
                 )
 
             self.cleanup_after_step(trajectory)
-
-        if self.eval: # final evaluation
-            self.eval(self.policy)
-            wandb_logger.flush(step=len(self.dataloader))
 
         self.policy.save_checkpoint()
 

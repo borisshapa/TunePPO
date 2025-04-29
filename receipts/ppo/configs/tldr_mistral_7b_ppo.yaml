@@ -53,7 +53,8 @@ dataset:
 dataloader:
   _component_: ppotune.data.loaders.distributed_dataloader
   batch_size: 64
-  num_steps: 156
+  num_steps: 26
+  num_epochs: 6
 
 evaluation_dataset:
   _component_: ppotune.data.sets.tldr_dataset
