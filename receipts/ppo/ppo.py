@@ -204,12 +204,6 @@ class PPORecipe(FTRecipeInterface):
         )
         # instantiate kl penalty module
         self.kl: KLPenalty = instantiate(cfg.kl_penalty)
-        # instantiate kl scheduler
-        # self._kl_scheduler: Scheduler = instantiate(
-        #     cfg.kl_scheduler,
-        #     param=self.kl._coeff,
-        #     num_steps = len(self.dataloader)
-        # )
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
         """
@@ -399,8 +393,6 @@ class PPORecipe(FTRecipeInterface):
 
                     self._optimizer.step()
                     self._optimizer.zero_grad(set_to_none=True)
-
-            # self._kl_scheduler.step()
 
             if self.eval:
                 self.eval(self.policy, step)
