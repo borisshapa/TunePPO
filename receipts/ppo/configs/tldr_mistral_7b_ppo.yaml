@@ -47,11 +47,13 @@ tokenizer:
 
 dataset:
   _component_: ppotune.data.sets.tldr_dataset
-  source: RLHF-And-Friends/tldr-ppo
+  source: RLHF-And-Friends/tldr-thematic
   split: train
+  configurations: [legaladvice, personalfinance]
 
 dataloader:
-  _component_: ppotune.data.loaders.distributed_dataloader
+  _component_: ppotune.data.loaders.dataloader
+  # _component_: ppotune.data.loaders.distributed_dataloader
   batch_size: 64
   num_steps: 26
   num_epochs: 6

@@ -82,6 +82,13 @@ class ReferenceCompletionEvaluator(Evaluator):
         winrate = wins[valid].float().mean()
         logger.collect("winrate", winrate)
 
+        for idx in range(self._dataloader.batch_size):
+            logger.collect_reference(
+                reference=completions[idx][0],
+                completion=completions[idx][1],
+                chosen=wins[idx]
+            )
+
 
 def reference_completion_evaluator(
         arbiter: PairwiseArbiter,
