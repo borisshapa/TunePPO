@@ -27,26 +27,18 @@ from tqdm import tqdm
 from transformers import PreTrainedTokenizerBase
 
 from ppotune.advantage import IAdvantageModel
+from ppotune.comm.mixture import DistributedPolicyMixture
 from ppotune.config import instantiate
 from ppotune.data.types import (
     PPOTrajectoryStats,
     AdvantageTrajectoryStats,
 )
-from ppotune.dist import (
-    DistributedPolicyMixture,
-    self_preferred_distributed_softmax
-)
 from ppotune.evaluation import Evaluator
 from ppotune.loss import KLPenalty
 from ppotune.log import WandbLogger
 from ppotune.model import GenerativeLoRAModel
-from ppotune.peft import (
-    merge_lora_adapter,
-    clear_lora_adapter,
-)
 from ppotune.utils import grad_norm
 
-# from ppotune.schedulers.scheduler import Scheduler
 
 log = utils.get_logger("DEBUG")
 wandb_logger = WandbLogger()
@@ -125,9 +117,6 @@ class PPORecipe(FTRecipeInterface):
         self.seed = training.set_seed(seed=cfg.seed)
         self._rng = torch.Generator(self._device).manual_seed(self.seed)
 
-        # reference policy update schedule
-        self._update_ref_policy_every_n_steps = cfg.get("update_ref_policy_every_n_steps", 1)
-
         # ppo loss epsilon
         self._epsilon = cfg.epsilon
 
@@ -193,14 +182,10 @@ class PPORecipe(FTRecipeInterface):
                 self.policy.parameters(),
                 self.advantage.parameters()
         ))
-        # initialize reference policy
-        self._self_preference = cfg.self_preference
-        self._weighting_temp = cfg.weighting_temp
-        self._ref_policy = DistributedPolicyMixture(
-            local_policy=self.policy,
-            reducer = self_preferred_distributed_softmax(
-                self_preference=self._self_preference
-            )
+        # instantiate reference policy
+        self._ref_policy: DistributedPolicyMixture = instantiate(
+            cfg.reference,
+            local_policy=self.policy
         )
         # instantiate kl penalty module
         self.kl: KLPenalty = instantiate(cfg.kl_penalty)
@@ -356,6 +341,7 @@ class PPORecipe(FTRecipeInterface):
 
         if self.eval:
             self.eval(self.policy)
+            wandb_logger.flush(step=0)
 
         for step, batch in tqdm(
             enumerate(self.dataloader, start=1),
@@ -397,20 +383,10 @@ class PPORecipe(FTRecipeInterface):
             if self.eval:
                 self.eval(self.policy, step)
 
+            self._ref_policy.gather(trajectory)
+            self._ref_policy.update(step)
+
             wandb_logger.flush(step=step)
-
-            if step % self._update_ref_policy_every_n_steps == 0:
-                # effectively update reference policy.
-                merge_lora_adapter(self.policy)
-                clear_lora_adapter(self.policy)
-
-                # update reference policy mixture weights
-                self._ref_policy._reducer = self_preferred_distributed_softmax(
-                    self_preference=self._self_preference,
-                    self_weight=trajectory.scores.mean(),
-                    temperature=self._weighting_temp,
-                )
-
             self.cleanup_after_step(trajectory)
 
         self.policy.save_checkpoint()
