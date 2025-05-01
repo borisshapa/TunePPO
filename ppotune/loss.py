@@ -35,7 +35,7 @@ class KLPenalty(nn.Module):
         per_token_kl = torch.exp(rhs_logprobs - lhs_logprobs) - (rhs_logprobs - lhs_logprobs) - 1
         kl_penalty = coeff * masked_mean(per_token_kl, padding_masks)
 
-        logger.collect("kl_penalty", kl_penalty)
-        logger.collect("kl_coeff", coeff)
+        logger.collect("kl_penalty.value", kl_penalty)
+        logger.collect("kl_penalty.coeff", coeff)
 
         return kl_penalty

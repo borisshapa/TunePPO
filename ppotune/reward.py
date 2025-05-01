@@ -150,7 +150,7 @@ class PerTokenKLPenalizedRewardModel(LLMRewardModel):
         pos_after_eos = get_unmasked_sequence_lengths(mask_after_eos)
 
         kl_coeff = float(self._kl_coeff)
-        rewards, kl, kl_rewards = get_rewards_ppo(
+        rewards, _, kl_rewards = get_rewards_ppo(
             scores,
             gen_logprobs,
             ref_logprobs,
@@ -158,8 +158,9 @@ class PerTokenKLPenalizedRewardModel(LLMRewardModel):
             pos_after_eos
         )
         logger.collect_dict({
-            "rlhf_reward": scores + kl_rewards.sum(1),
-            "kl_reward": kl_rewards.sum(1),
+            "reward.kl_coeff": torch.tensor(kl_coeff),
+            "reward.total": scores + kl_rewards.sum(1),
+            "reward.kl_penalty": kl_rewards.sum(1),
         })
         return rewards
 
