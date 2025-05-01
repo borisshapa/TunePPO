@@ -40,6 +40,16 @@ output_dir: ${prefix}/checkpoints/${project}/${group}/${model}-${run}
 
 seed: 0xD1CE
 
+# Notable relations for further reference
+#
+# (1) total_steps = dataloader.num_steps * dataloader.num_epochs
+# e.g for learning rate scheduling
+# (2) num_forward_steps = dataloader.batch_size / forward_batch_size * total_steps
+# e.g. for in-reward kl_coeff scheduling
+# (3) num_communcation_rounds = total_steps / reference.update_every_n_steps
+# e.g. for communication self preference scheduling
+
+
 # ---------------------------------- Data ----------------------------------- #
 #
 tokenizer:
@@ -52,7 +62,7 @@ dataset:
   # source: RLHF-And-Friends/tldr-ppo
   source: RLHF-And-Friends/tldr-thematic
   split: train
-  configurations: [legaladvice, personalfinance]
+  configurations: [legaladvice, personalfinance] # assert len(conf) == num_agents
 
 dataloader:
   _component_: ppotune.data.loaders.dataloader
@@ -173,7 +183,7 @@ reference:
         _component_: ppotune.volatile.linearly_scheduled
         start: 1.0
         end: 0.0
-        steps: 12 # num comm rounds = total_steps / update_every_n_steps
+        steps: 13 # num_communcation_rounds (3) + initialization
 
 
 # --------------------------------- Other ----------------------------------- #
