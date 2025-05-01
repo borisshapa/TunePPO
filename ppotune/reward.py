@@ -11,6 +11,7 @@ from torchtune.rlhf import get_reward_penalty_mask, get_rewards_ppo
 from ppotune.log import WandbLogger
 from ppotune.model import LoRAModel
 from ppotune.utils import append_mask
+from ppotune.volatile import VolatileFloat
 
 import torch
 from torch.nn import Parameter
@@ -116,7 +117,7 @@ class PerTokenKLPenalizedRewardModel(LLMRewardModel):
         penalise_no_eos:    bool,
         reward_penalty:     int,
         min_response_len:   int,
-        kl_coeff:           float,
+        kl_coeff:           float | VolatileFloat,
     ) -> None:
 
         super().__init__(
@@ -125,7 +126,7 @@ class PerTokenKLPenalizedRewardModel(LLMRewardModel):
             reward_penalty,
             min_response_len,
         )
-        self.kl_coeff = kl_coeff
+        self._kl_coeff = kl_coeff
 
     @torch.no_grad()
     def __call__(
@@ -148,11 +149,12 @@ class PerTokenKLPenalizedRewardModel(LLMRewardModel):
         mask_after_eos = append_mask(responses_pad_mask)
         pos_after_eos = get_unmasked_sequence_lengths(mask_after_eos)
 
+        kl_coeff = float(self._kl_coeff)
         rewards, kl, kl_rewards = get_rewards_ppo(
             scores,
             gen_logprobs,
             ref_logprobs,
-            self.kl_coeff,
+            kl_coeff,
             pos_after_eos
         )
         logger.collect_dict({

@@ -2,13 +2,11 @@
 # LICENSE file in the root directory of this source tree.
 import typing as tp
 
-import math
 import sys
 
 from functools import partial
 from itertools import chain
-from typing import List, Tuple
-from warnings import warn
+from typing import List
 
 import torch
 import torch.distributed as dist
@@ -17,7 +15,6 @@ from omegaconf import DictConfig
 from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.sampler import Sampler
 
 from torchtune import config, generation, rlhf, training, utils
 from torchtune.modules.peft import (
@@ -25,33 +22,23 @@ from torchtune.modules.peft import (
 )
 from torchtune.modules.transforms.tokenizers import ModelTokenizer
 from torchtune.recipe_interfaces import FTRecipeInterface
-from torchtune.utils import log_rank_zero
 
 from tqdm import tqdm
 from transformers import PreTrainedTokenizerBase
 
 from ppotune.advantage import IAdvantageModel
+from ppotune.comm.mixture import DistributedPolicyMixture
 from ppotune.config import instantiate
-from ppotune.datatypes import (
+from ppotune.data.types import (
     PPOTrajectoryStats,
     AdvantageTrajectoryStats,
-)
-from ppotune.datasets.utils import LeftPadCollator
-from ppotune.dist import (
-    DistributedPolicyMixture,
-    self_preferred_distributed_softmax
 )
 from ppotune.evaluation import Evaluator
 from ppotune.loss import KLPenalty
 from ppotune.log import WandbLogger
 from ppotune.model import GenerativeLoRAModel
-from ppotune.peft import (
-    merge_lora_adapter,
-    clear_lora_adapter,
-)
 from ppotune.utils import grad_norm
 
-from ppotune.schedulers.scheduler import Scheduler
 
 log = utils.get_logger("DEBUG")
 wandb_logger = WandbLogger()
@@ -126,25 +113,9 @@ class PPORecipe(FTRecipeInterface):
         self._device = utils.get_device("cuda")
         self._dtype = training.get_dtype(cfg.dtype, device=self._device)
 
-        # if dist.get_rank() % 2 == 0:
-        #     torch.cuda.set_per_process_memory_fraction(0.5, device=self._device)
-
-        # checkpointing attributes
-        self._output_dir = cfg.output_dir
-
         # manually set up a generator
         self.seed = training.set_seed(seed=cfg.seed)
         self._rng = torch.Generator(self._device).manual_seed(self.seed)
-
-        # initialize step counters
-        self.global_step    = 0
-        self._total_steps   = 0
-        self._steps_run     = 0
-        self._total_epochs  = 0
-        self._epochs_run    = 0
-
-        # reference policy update schedule
-        self._update_ref_policy_every_n_steps = cfg.get("update_ref_policy_every_n_steps", 1)
 
         # ppo loss epsilon
         self._epsilon = cfg.epsilon
@@ -160,18 +131,19 @@ class PPORecipe(FTRecipeInterface):
         wandb_logger.setup(cfg.wandb_logger)
         wandb_logger.log_config(cfg)
 
-        # instantiate tokenizer
+        # setup data
         self._tokenizer: PreTrainedTokenizerBase | ModelTokenizer = instantiate(
             cfg.tokenizer
         )
-
-        # setup sampler and dataloader
-        self._sampler, self._dataloader = self._setup_data(
-            cfg_dataset = cfg.dataset,
-            cfg_sampler = cfg.sampler,
-            tokenizer   = self._tokenizer,
-            shuffle     = cfg.shuffle,
-            batch_size  = cfg.batch_size,
+        dataset: Dataset = instantiate(
+            cfg.dataset,
+            tokenizer=self._tokenizer
+        )
+        self.dataloader: DataLoader = instantiate(
+            cfg.dataloader,
+            tokenizer=self._tokenizer,
+            dataset=dataset,
+            seed=self.seed
         )
         self._setup_batch_sizes(cfg)
 
@@ -180,12 +152,19 @@ class PPORecipe(FTRecipeInterface):
             cfg.get("evaluation_dataset", None),
             tokenizer=self._tokenizer
         )
+        evaluation_dataloader: tp.Opeional[DataLoader] = instantiate(
+            cfg.get("evaluation_dataloader", None),
+            tokenizer=self._tokenizer,
+            dataset=evaluation_dataset,
+            seed=self.seed
+        )
         self.eval: tp.Optional[Evaluator] = instantiate(
             cfg.get("evaluator", None),
-            dataset     = evaluation_dataset,
-            batch_size  = self._forward_batch_size,
+            tokenizer=self._tokenizer,
+            dataloader=evaluation_dataloader,
         )
-        # under chosen dtype on local device
+
+        # setup policy and advantage model
         with training.set_default_dtype(self._dtype), self._device:
             self.policy: GenerativeLoRAModel = instantiate(
                 cfg.policy,
@@ -203,41 +182,21 @@ class PPORecipe(FTRecipeInterface):
                 self.policy.parameters(),
                 self.advantage.parameters()
         ))
-        # initialize reference policy
-        self._self_preference = cfg.self_preference
-        self._weighting_temp = cfg.weighting_temp
-        self._ref_policy = DistributedPolicyMixture(
-            local_policy=self.policy,
-            reducer = self_preferred_distributed_softmax(
-                self_preference=self._self_preference
-            )
+        # instantiate reference policy
+        self._ref_policy: DistributedPolicyMixture = instantiate(
+            cfg.reference,
+            local_policy=self.policy
         )
         # instantiate kl penalty module
         self.kl: KLPenalty = instantiate(cfg.kl_penalty)
-        # instantiate kl scheduler
-        self._kl_scheduler: Scheduler = instantiate(
-            cfg.kl_scheduler,
-            param=self.kl._coeff,
-            num_steps = self._total_steps,
-        )
 
     def _setup_batch_sizes(self, cfg: DictConfig) -> None:
         """
         Validates and sets up parameters for used during training and for tracking training state,
         batch sizes for model forward passes during trajectory generation, PPO minibatches,
-        PPO microbatches for gradient accumulation and GRPO group sizes.
-
-        Raises
-            - ValueError if:
-                - batch_size is not divisible by forward_batch_size
-                - batch_size is not divisible by ppo_batch_size
-                - ppo_batch_size is not divisible by gradient_accumulation_steps
-                - num_steps is less than batch_size
-                - (grpo) batch_size is not divisible by group size
-                - (grpo) forward_batch_size is not divisible by group_size
+        PPO microbatches for gradient accumulation.
         """
-        self.batch_size = cfg.batch_size
-        self.group_size = cfg.group_size
+        self.batch_size = cfg.dataloader.batch_size
         self._forward_batch_size = cfg.forward_batch_size
         self._ppo_epochs = cfg.ppo_epochs
         self._ppo_batch_size = cfg.ppo_batch_size
@@ -245,96 +204,9 @@ class PPORecipe(FTRecipeInterface):
         self._ppo_backward_batch_size = (
             cfg.ppo_batch_size // self._gradient_accumulation_steps
         )
-
-        if self.batch_size % self._forward_batch_size != 0:
-            raise ValueError(
-                f"batch_size ({self.batch_size}) must be exactly divisible by "
-                f"forward_batch_size ({self._forward_batch_size})."
-            )
-        if self.batch_size % self._ppo_batch_size != 0:
-            raise ValueError(
-                f"batch_size ({self.batch_size}) must be exactly divisible by "
-                f"ppo_batch_size ({self._ppo_batch_size})."
-            )
-        if self._ppo_batch_size % self._gradient_accumulation_steps != 0:
-            raise ValueError(
-                f"ppo_batch_size ({self._ppo_batch_size}) must be exactly divisible "
-                f"by gradient_accumulation_steps ({self._gradient_accumulation_steps})."
-            )
-
-        if self.batch_size % self.group_size != 0:
-            raise ValueError(
-                f"batch_size ({self.batch_size}) must be exactly divisible by "
-                f"group_size({self.group_size})."
-            )
-        if self._forward_batch_size % self.group_size != 0:
-            raise ValueError(
-                f"forward_batch_size ({self._forward_batch_size}) must be exactly divisible by "
-                f"group_size({self.group_size})."
-            )
-
-        self._total_steps = cfg.num_steps // self.batch_size
-
-        batches_per_epoch = max(
-            1, len(self._dataloader)
-        )  # when we only have a single batch in the dataset
-
-        self._total_epochs = math.ceil(self._total_steps / batches_per_epoch)
-        if self._total_steps == 0:
-            raise ValueError(
-                f"num_steps {cfg.num_steps} must be greater than the batch size {self.batch_size}."
-            )
-        if self._total_steps < len(self._dataloader):
-            warn(
-                f"There are fewer total steps ({self._total_steps}, (num_steps//batch_size) than"
-                f"there are batches ({len(self._dataloader)}) in the dataset. Training will stop"
-                f"after ({self._total_steps}) steps without saving intermediate checkpoints."
-            )
-        if (self._total_steps > batches_per_epoch) and (
-            self._total_steps % batches_per_epoch != 0
-        ):
-            warn(
-                f"num_steps ({cfg.num_steps}) is not exactly divisible by "
-                f"the number of batches in the dataset ({batches_per_epoch}). "
-                f"Intermediate checkpoints will only be saved every {batches_per_epoch} steps."
-            )
-        log_rank_zero(
-            log, f"Total steps to run: {self._total_steps}, Total epochs: {self._total_epochs}"
-        )
-
-    def _setup_data(
-        self,
-        cfg_dataset: DictConfig,
-        cfg_sampler: DictConfig,
-        tokenizer: ModelTokenizer | PreTrainedTokenizerBase,
-        batch_size: int,
-        shuffle: bool,
-    ) -> Tuple[Sampler, DataLoader]:
-        """
-        All data related setup happens here.
-        """
-        dataset = instantiate(
-            cfg_dataset,
-            tokenizer=tokenizer
-        )
-        sampler: Sampler = instantiate(
-            cfg_sampler,
-            dataset=dataset,
-            shuffle=shuffle,
-            drop_last=True
-        ) # better set seed here
-        collator = LeftPadCollator(
-            tokens_key="tokens",
-            pad_token=tokenizer.pad_id
-        )
-        dataloader = DataLoader(
-            dataset=dataset,
-            sampler=sampler,
-            batch_size=batch_size,
-            drop_last=True,
-            collate_fn=collator
-        )
-        return sampler, dataloader
+        assert self.batch_size % self._forward_batch_size == 0
+        assert self.batch_size % self._ppo_batch_size == 0
+        assert self._ppo_batch_size % self._gradient_accumulation_steps == 0
 
     @torch.no_grad()
     def generate_trajectory(self, batch: dict) -> PPOTrajectoryStats:
@@ -467,86 +339,57 @@ class PPORecipe(FTRecipeInterface):
         """
         self._optimizer.zero_grad()
 
-        training_completed = False
-        pbar = tqdm(
-            total=self._total_steps,
-            initial=self._steps_run,
-            desc="Train",
-            disable=dist.get_rank() != 0
-        )
         if self.eval:
             self.eval(self.policy)
+            wandb_logger.flush(step=0)
 
-        for curr_epoch in range(self._epochs_run, self._total_epochs):
-            # Ensure data is not reshuffled at new epoch so the agents are
-            # trained on non-overlapping data.
-            self._sampler.set_epoch(0)
+        for step, batch in tqdm(
+            enumerate(self.dataloader, start=1),
+            desc="Train",
+            disable=dist.get_rank() != 0,
+            total=len(self.dataloader)
+        ):
 
-            for batch in self._dataloader:
-                trajectory = self.generate_trajectory_batched(batch, self._empty_cache)
-                # optimize with PPO objective over multiple epochs
-                for _ in range(self._ppo_epochs):
-                    batch_idxs = torch.randperm(self.batch_size, device=self._device)
-                    for i in range(0, self.batch_size, self._ppo_batch_size):
-                        mini_batch_idxs = batch_idxs[i : i + self._ppo_batch_size]
+            trajectory = self.generate_trajectory_batched(batch, self._empty_cache)
+            # optimize with PPO objective over multiple epochs
+            for _ in range(self._ppo_epochs):
+                batch_idxs = torch.randperm(self.batch_size, device=self._device)
+                for i in range(0, self.batch_size, self._ppo_batch_size):
+                    mini_batch_idxs = batch_idxs[i : i + self._ppo_batch_size]
 
-                        for j in range(
-                            0, self._ppo_batch_size, self._ppo_backward_batch_size
-                        ):
-                            backward_batch_idxs = mini_batch_idxs[
-                                j : j + self._ppo_backward_batch_size
-                            ]
+                    for j in range(
+                        0, self._ppo_batch_size, self._ppo_backward_batch_size
+                    ):
+                        backward_batch_idxs = mini_batch_idxs[
+                            j : j + self._ppo_backward_batch_size
+                        ]
 
-                            batch_trajectory = PPOTrajectoryStats(
-                                *map(
-                                    partial(
-                                        torch.index_select,
-                                        dim=0,
-                                        index=backward_batch_idxs,
-                                    ),
-                                    trajectory,
-                                )
+                        batch_trajectory = PPOTrajectoryStats(
+                            *map(
+                                partial(
+                                    torch.index_select,
+                                    dim=0,
+                                    index=backward_batch_idxs,
+                                ),
+                                trajectory,
                             )
-                            self.ppo_step(batch_trajectory)
-                            del batch_trajectory
+                        )
+                        self.ppo_step(batch_trajectory)
+                        del batch_trajectory
 
-                        self._optimizer.step()
-                        self._optimizer.zero_grad(set_to_none=True)
+                    self._optimizer.step()
+                    self._optimizer.zero_grad(set_to_none=True)
 
-                        self.global_step += 1
+            if self.eval:
+                self.eval(self.policy, step)
 
-                self._kl_scheduler.step()
-                self._steps_run += 1
+            self._ref_policy.gather(trajectory)
+            self._ref_policy.update(step)
 
-                if self.eval:
-                    self.eval(self.policy, self._steps_run)
+            wandb_logger.flush(step=step)
+            self.cleanup_after_step(trajectory)
 
-                wandb_logger.flush(step=self.global_step)
-
-                if self._steps_run % self._update_ref_policy_every_n_steps == 0:
-                    # effectively update reference policy.
-                    merge_lora_adapter(self.policy)
-                    clear_lora_adapter(self.policy)
-
-                    # update reference policy mixture weights
-                    self._ref_policy._reducer = self_preferred_distributed_softmax(
-                        self_preference=self._self_preference,
-                        self_weight=trajectory.scores.mean(),
-                        temperature=self._weighting_temp,
-                    )
-
-                self.cleanup_after_step(trajectory)
-
-                pbar.update(1)
-                if self._steps_run == self._total_steps:
-                    training_completed = True
-                    break
-
-            self._epochs_run += 1
-
-            if training_completed:
-                self.policy.save_checkpoint()
-                return
+        self.policy.save_checkpoint()
 
     def ppo_step(self, trajectory: PPOTrajectoryStats) -> None:
         """

@@ -1,6 +1,6 @@
 import typing as tp
 
-from ppotune.datasets.qa import QADataset, QAProblem, QATransform
+from ppotune.data.sets.qa import QADataset, QAProblem, QATransform
 
 from torchtune.modules.transforms.tokenizers import ModelTokenizer
 

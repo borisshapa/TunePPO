@@ -3,10 +3,9 @@ import torch
 import torch.distributed as dist
 
 from tqdm import tqdm
-from torch.utils.data import RandomSampler, DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torchtune.modules.transforms.tokenizers import ModelTokenizer
 from ppotune.arbiters.pairwise_arbiter import PairwiseArbiter
-from ppotune.datasets.utils import LeftPadCollator
 from ppotune.log import WandbLogger
 from ppotune.model import GenerativeModel
 
@@ -34,37 +33,15 @@ class ReferenceCompletionEvaluator(Evaluator):
     def __init__(
         self,
         arbiter: PairwiseArbiter,
-        num_samples: int,
+        tokenizer: ModelTokenizer,
+        dataloader: DataLoader,
         every_n_steps: int,
-        seed: tp.Optional[int] = None,
-        *, # the rest has to be defined in the recipe
-        dataset: Dataset,
-        batch_size: int,
     ) -> None:
 
         self._arbiter = arbiter
-        self._tokenizer: ModelTokenizer = dataset.tokenizer
+        self._tokenizer = tokenizer
+        self._dataloader = dataloader
         self._every_n_steps = every_n_steps
-
-        if seed is None:
-            seed = torch.randint(2**32, (1,))
-
-        sampler = RandomSampler(
-            dataset,
-            num_samples=num_samples,
-            generator=torch.Generator().manual_seed(seed)
-        )
-        collator = LeftPadCollator(
-            tokens_key="tokens",
-            pad_token=self._tokenizer.pad_id
-        )
-        self._dataloader = DataLoader(
-            dataset=dataset,
-            sampler=sampler,
-            batch_size=batch_size,
-            drop_last=True,
-            collate_fn=collator
-        )
 
     def __call__(
         self,
@@ -81,7 +58,11 @@ class ReferenceCompletionEvaluator(Evaluator):
         decode = lambda tokens: self._tokenizer.decode(
             tokens.tolist(), skip_special_tokens=True
         )
-        for batch in tqdm(self._dataloader, desc="Evaluation", disable=dist.get_rank() != 0):
+        for batch in tqdm(
+            self._dataloader,
+            desc="Evaluation",
+            disable=dist.get_rank() != 0
+        ):
             batch["tokens"] = batch["tokens"].to(model._device)
             generated = model.generate(prompt=batch["tokens"])
 
@@ -101,22 +82,24 @@ class ReferenceCompletionEvaluator(Evaluator):
         winrate = wins[valid].float().mean()
         logger.collect("winrate", winrate)
 
+        for idx in range(self._dataloader.batch_size):
+            logger.collect_reference(
+                reference=completions[idx][0],
+                completion=completions[idx][1],
+                chosen=wins[idx]
+            )
+
 
 def reference_completion_evaluator(
         arbiter: PairwiseArbiter,
-        num_samples: int,
+        tokenizer: ModelTokenizer,
+        dataloader: DataLoader,
         every_n_steps: int,
-        seed: tp.Optional[int] = None,
-        *, # the rest has to be defined in the recipe
-        dataset: Dataset,
-        batch_size: int,
 ) -> ReferenceCompletionEvaluator:
 
     return ReferenceCompletionEvaluator(
         arbiter=arbiter,
-        num_samples=num_samples,
+        tokenizer=tokenizer,
+        dataloader=dataloader,
         every_n_steps=every_n_steps,
-        seed=seed,
-        dataset=dataset,
-        batch_size=batch_size,
     )

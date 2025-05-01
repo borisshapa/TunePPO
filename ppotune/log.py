@@ -39,11 +39,10 @@ class WandbLogger(MetricLoggerInterface):
         self._completions = wandb.Table(
             columns=["completion", "score"]
         )
-        
-        self._validation_table = wandb.Table(
-            columns=["reference_completion", "completion", "chosen"]
+        self._references = wandb.Table(
+            columns=["reference", "completion", "chosen"]
         )
-        
+
         wandb.init(
             dir=dir,
             entity=config.entity,
@@ -52,15 +51,15 @@ class WandbLogger(MetricLoggerInterface):
             name=name,
         )
         # define default x-axis (for latest wandb versions)
-        wandb.define_metric("global_step")
-        wandb.define_metric("*", step_metric="global_step", step_sync=True)
+        wandb.define_metric("step")
+        wandb.define_metric("*", step_metric="step", step_sync=True)
 
 
     def log(self, name: str, data: Scalar, step: int) -> None:
-        wandb.log({name: data, "global_step": step})
+        wandb.log({name: data, "step": step})
 
     def log_dict(self, payload: tp.Mapping[str, Scalar], step: int) -> None:
-        wandb.log({**payload, "global_step": step})
+        wandb.log({**payload, "step": step})
 
     def log_config(self, config: DictConfig) -> None:
         resolved = OmegaConf.to_container(config, resolve=True)
@@ -88,17 +87,17 @@ class WandbLogger(MetricLoggerInterface):
         Collect completion and score.
         """
         self._completions.add_data(completion, score)
-        
-    def collect_validation_completions(
+
+    def collect_reference(
         self,
-        reference_completion: str,
+        reference: str,
         completion: str,
         chosen: int
     ) -> None:
         """
-        Collect pair of completions and chosen completion id for validation.
+        Collect reference completion, validated completion and chosen id.
         """
-        self._validation_table.add_data(reference_completion, completion, chosen)
+        self._references.add_data(reference, completion, chosen)
 
     def flush(self, step: int) -> None:
         """
@@ -108,12 +107,18 @@ class WandbLogger(MetricLoggerInterface):
             self.log(name, torch.stack(self._log_buffer[name]).mean(), step)
 
         self._log_buffer = {}
-        self.log("completion table", self._completions, step)
-        self._completions = wandb.Table(columns=["completion", "score"])
-        self.log("validation table", self._validation_table, step)
-        self._validation_table = wandb.Table(
-            columns=["reference_completion", "completion", "chosen"]
-        )
+
+        if len(self._completions.data) != 0:
+            self.log("completions", self._completions, step)
+            self._completions = wandb.Table(columns=[
+                "completion", "score"
+            ])
+
+        if len(self._references.data) != 0:
+            self.log("references", self._references, step)
+            self._references = wandb.Table(columns=[
+                "reference", "completion", "chosen"
+            ])
 
     def close(self) -> None:
         wandb.finish()

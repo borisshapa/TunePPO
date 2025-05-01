@@ -1,18 +1,17 @@
-from ppotune.datasets.gsm8k import (
+from ppotune.data.sets.gsm8k import (
     gsm8k_dataset,
     chat_gsm8k_dataset,
     plain_gsm8k_dataset,
     eval_gsm8k_dataset
 )
-from ppotune.datasets.alpaca import (
+from ppotune.data.sets.alpaca import (
     alpaca_dataset,
 )
-from ppotune.datasets.tldr import (
+from ppotune.data.sets.tldr import (
     tldr_dataset
 )
 
 __all__ = [
-    "text_completion_dataset",
     "gsm8k_dataset",
     "chat_gsm8k_dataset",
     "plain_gsm8k_dataset",

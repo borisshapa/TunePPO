@@ -7,11 +7,12 @@ from torchtune.modules.transforms import Transform
 from torchtune.data import Message
 from datasets import load_dataset
 
-from ppotune.datasets.utils import PromptTemplate, apply_prompt_template
+from ppotune.data.utils import PromptTemplate, apply_prompt_template
 
 
 class QAProblem(tp.TypedDict):
     question: str
+    cot: tp.Optional[str] = None
     answer: str
 
 class QATransform(Transform):
@@ -47,11 +48,11 @@ class QADataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, index: int) -> tp.Dict[str, tp.Any]:
-        sample = self.sample_transform(self.data[index])
-        question = sample["question"]
-        answer = sample["answer"]
-
+    def _tokenize_question(self, question: str) -> tp.List[int]:
+        """
+        Tokenize a question according to dataset format defined in temrms of
+        optional system prompt and prompt template for non-chat models.
+        """
         messages = []
         if self.system_prompt is not None:
             messages.append(Message(
@@ -81,4 +82,13 @@ class QADataset(Dataset):
             tokens = self.tokenizer.encode(text, add_eos=False)
             tokens = tokens[:self.tokenizer.max_seq_len]
 
-        return {"tokens": tokens, "answers": answer}
+        return tokens
+
+    def __getitem__(self, index: int) -> tp.Dict[str, tp.Any]:
+        sample = self.sample_transform(self.data[index])
+        tokens = self._tokenize_question(sample["question"])
+        return {
+            "tokens": tokens,
+            "cots": sample["cot"],
+            "answers": sample["answer"]
+        }

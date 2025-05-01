@@ -119,5 +119,5 @@ class RemotePairwiseArbiter(PairwiseArbiter):
                 f"Invalid response from the judge model: '{response}'. Returning -1."
             )
             return -1
-        
+
         return response
