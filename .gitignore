@@ -6,3 +6,5 @@ activate
 activate-nightly
 *__pycache__
 ppo_tune.egg-info
+wandb/
+presets/

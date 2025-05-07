@@ -1,0 +1,33 @@
+program: receipts/ppo/ppo.py
+name: fed-sweep
+method: grid
+metric:
+  goal: maximize
+  name: winrate
+parameters:
+  kl_penalty.coeff:
+    values: [0.03, 0.1, 0.2, 0.5, 1.0]
+  reference.protocol.weightage.self_preference._component_:
+    values: ["ppotune.volatile.linearly_scheduled", "ppotune.volatile.const"]
+  reference.protocol.weightage.self_preference.value:
+    values: [1.0, 0.8, 0.6, 0.4, 0.2]
+  reference.protocol.weightage.temperature:
+    values: [0.7, 0.8, 0.9, 1.0]
+  reference.protocol.update_every_n_steps:
+    values: [10, 20, 30, 40, 50]
+  reference.protocol._component_:
+    values: [
+    "ppotune.comm.static_protocol",
+    "ppotune.comm.score_based_protocol",
+    "ppotune.comm.uniform_weightage",
+    "ppotune.comm.softmax_weightage",
+    "ppotune.comm.softmax_refined_uniform_weightage"
+    ]
+command:
+  - bash
+  - -c
+  - |
+    CUDA_VISIBLE_DEVICES=3 vllm serve /data/models/judge --enable-reasoning --reasoning-parser deepseek_r1 --max-model-len 12000 &
+    sleep 150
+    CUDA_VISIBLE_DEVICES=0,1,2 tune run --nproc_per_node 3 receipts/ppo/ppo.py --config receipts/ppo/configs/tldr_mistral_7b_ppo.yaml ${args_no_hyphens}
+
