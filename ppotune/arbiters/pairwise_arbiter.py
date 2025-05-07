@@ -109,9 +109,13 @@ class RemotePairwiseArbiter(PairwiseArbiter):
         completion = self._client.chat.completions.create(
             model=self._model,
             messages=messages,
-            max_tokens=1
+            temperature=0.7,
+            top_p=0.8,
+            extra_body={ "top_k": 20, "min_p": 0.0},
+
         )
-        response = completion.choices[0].message.content
+        response = completion.choices[0].message.content.strip()
+
         if response in ["0", "1"]:
             response = int(response)
         else:

@@ -1,8 +1,2 @@
-.python-version
-.venv
-.tune-venv
-.nightly-venv
-activate
-activate-nightly
-*__pycache__
-ppo_tune.egg-info
+presets/
+wandb/

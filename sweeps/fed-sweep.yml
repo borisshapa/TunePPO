@@ -1,0 +1,21 @@
+program: receipts/ppo/ppo.py
+name: fed-sweep
+method: grid
+metric:
+  goal: maximize
+  name: winrate
+parameters:
+  kl_penalty.coeff:
+    values: [0.03, 0.1, 0.3, 0.5, 1.0, 1.5]
+  reference.protocol.weightage.self_preference:
+    values: [1.0, 0.8, 0.6, 0.4, 0.2]
+  reference.update_every_n_steps:
+    values: [1, 3, 7, 15, 30, 50]
+command:
+  - bash
+  - -c
+  - |
+    CUDA_VISIBLE_DEVICES=1 vllm serve /data/models/judge --max-model-len 32 &
+    sleep 20
+    CUDA_VISIBLE_DEVICES=0 tune run --nproc_per_node 1 receipts/ppo/ppo.py --config receipts/ppo/configs/tldr_mistral_7b_ppo.yaml ${args_no_hyphens}
+
