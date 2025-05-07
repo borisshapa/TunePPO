@@ -1,0 +1,10 @@
+torch
+torchvision
+torchao
+torchtune==0.6.1
+
+bitsandbytes
+transformers
+wandb
+openai
+vllm==0.8.5.post1
